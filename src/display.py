@@ -305,24 +305,32 @@ def draw_lower(img, d, state, info, dist_km, brg, kind, weather, caption):
            font=font(14), fill=col("RED"), anchor="mm")
     draw_radar(img, d, W/2, 600, 80, dist_km, brg, state[10], kind)
 
-    # Origin / destination country either side of the radar, in the free margins.
+    # Origin / destination either side of the radar, in the free margins.
+    # Prefer country, fall back to city then code so the space is never empty.
     margin_w = int((W/2 - 80) - PAD - 6)   # width of the gap beside the radar
-    from_country = info.get("from_country")
-    to_country   = info.get("to_country")
-    if from_country:
-        d.text((PAD + margin_w/2, 588), "FROM",
-               font=font(11), fill=col("RED"), anchor="mm")
-        d.text((PAD + margin_w/2, 610),
-               from_country.upper(),
-               font=fit_font(from_country.upper(), margin_w, 14, 9),
+    from_txt = (info.get("from_country") or info.get("from_city")
+                or info.get("from_code"))
+    to_txt   = (info.get("to_country") or info.get("to_city")
+                or info.get("to_code"))
+
+    def _radar_label(cx, head, txt):
+        d.text((cx, 588), head, font=font(11), fill=col("RED"), anchor="mm")
+        d.text((cx, 610), txt.upper(),
+               font=fit_font(txt.upper(), margin_w, 14, 9),
                fill=col("BLACK"), anchor="mm")
-    if to_country:
-        d.text((W - PAD - margin_w/2, 588), "TO",
-               font=font(11), fill=col("RED"), anchor="mm")
-        d.text((W - PAD - margin_w/2, 610),
-               to_country.upper(),
-               font=fit_font(to_country.upper(), margin_w, 14, 9),
-               fill=col("BLACK"), anchor="mm")
+
+    left_cx  = PAD + margin_w/2
+    right_cx = W - PAD - margin_w/2
+    if from_txt:
+        _radar_label(left_cx, "FROM", from_txt)
+    if to_txt:
+        _radar_label(right_cx, "TO", to_txt)
+    # If a side is unknown, fill it with home range/bearing so neither margin
+    # of the radar reads as dead empty space.
+    if not from_txt and dist_km is not None:
+        _radar_label(left_cx, "RANGE", f"{dist_km:.0f} KM")
+    if not to_txt and brg is not None:
+        _radar_label(right_cx, "BEARING", f"{brg:.0f}° {compass(brg)}")
 
     d.text((W/2, 690), caption, font=font(12, reg=True),
            fill=col("BLACK"), anchor="mm")
