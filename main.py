@@ -21,33 +21,40 @@ from src.web      import start_control_server, STATE, STATE_LOCK, record_nearby
 
 
 def _flight_summary(state, dist_km) -> dict:
-    info   = enrich(state)
+    callsign = (state[1] or "").strip()
+    lat, lon = state[6], state[5]
     alt_m  = state[13] if state[13] is not None else state[7]
     alt_ft = round(alt_m * 3.281) if alt_m is not None else None
     spd_kt = round(state[9] * 1.94384) if state[9] is not None else None
-    lat, lon = state[6], state[5]
-    brg = bearing(HOME_LAT, HOME_LON, lat, lon) if (lat and lon) else None
+    brg = bearing(HOME_LAT, HOME_LON, lat, lon) if (lat is not None and lon is not None) else None
+
+    info = {}
+    try:
+        info = enrich(state) or {}
+    except Exception as exc:
+        logger.debug("enrichment fallback for %s: %s", callsign, exc)
+
     return {
-        "callsign":    (state[1] or "").strip(),
-        "flight":      (state[1] or "").strip(),
-        "icao24":      state[0],
-        "airline":     info.get("airline"),
+        "callsign":     callsign or state[0] or "--",
+        "flight":       callsign or state[0] or "--",
+        "icao24":       state[0],
+        "airline":      info.get("airline"),
         "airline_code": info.get("airline_code"),
-        "type":        info.get("type"),
-        "reg":         info.get("reg"),
-        "from_code":   info.get("from_code"),
-        "from_city":   info.get("from_city"),
-        "to_code":     info.get("to_code"),
-        "to_city":     info.get("to_city"),
-        "alt_ft":      alt_ft,
-        "spd_kt":      spd_kt,
-        "vrate":       state[11],
-        "on_ground":   bool(state[8]),
-        "track_deg":   state[10],
-        "bearing_deg": round(brg, 1) if brg is not None else None,
-        "dist_km":     round(dist_km, 1) if dist_km is not None else None,
-        "lat":         lat,
-        "lon":         lon,
+        "type":         info.get("type"),
+        "reg":          info.get("reg"),
+        "from_code":    info.get("from_code"),
+        "from_city":    info.get("from_city"),
+        "to_code":      info.get("to_code"),
+        "to_city":      info.get("to_city"),
+        "alt_ft":       alt_ft,
+        "spd_kt":       spd_kt,
+        "vrate":        state[11],
+        "on_ground":    bool(state[8]),
+        "track_deg":    state[10],
+        "bearing_deg":  round(brg, 1) if brg is not None else None,
+        "dist_km":      round(dist_km, 1) if dist_km is not None else None,
+        "lat":          lat,
+        "lon":          lon,
     }
 
 

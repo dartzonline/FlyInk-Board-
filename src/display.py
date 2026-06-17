@@ -44,10 +44,10 @@ try:
     inky = _inky_auto()
     inky.set_border(inky.WHITE)
     INKY_AVAILABLE = True
-except Exception:
+except Exception as exc:
     inky = None
     INKY_AVAILABLE = False
-    logger.warning("Inky display not available — running in simulation mode.")
+    logger.warning("Inky display not available — running in simulation mode: %s", exc)
 
 
 def col(name):
@@ -568,7 +568,7 @@ def draw_tracking(ctx: dict, weather: dict):
 
 
 # ---------------------------------------------------------------------------
-# render — push to hardware (or save simulation PNG)
+# render — push to hardware (simulation mode is a no-op unless explicitly enabled)
 # ---------------------------------------------------------------------------
 
 def render(img):
@@ -576,7 +576,7 @@ def render(img):
     if inky:
         inky.set_image(out)
         inky.show()
-    else:
+    elif os.environ.get("SAVE_SIMULATION_OUTPUT") == "1":
         path = "simulation_output.png"
         out.convert("RGB").save(path)
         logger.info("Simulation saved to %s", path)
