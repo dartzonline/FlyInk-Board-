@@ -219,13 +219,15 @@ The Inky display immediately switches to the tracking screen showing:
 - Red `✈ FLIGHT TRACKING` banner
 - Live progress bar with aircraft icon positioned along the route
 - Scheduled and revised departure / arrival times (from AirLabs)
-- Delay badge (`+N MIN` in red, or `ON TIME` in blue)
+- Delay badge (`+N MIN` in red, `N MIN EARLY`, or `ON TIME`)
 - Calculated ETA from live groundspeed
 - Full telemetry and radar in the lower panel
 
-The display **auto-reverts** 10 minutes after landing, or hit **Stop** to unpin immediately.
+These times and the delay badge appear on **both** the Inky screen and the web **Track a Flight** tab. The display **auto-reverts** 10 minutes after landing, or hit **Stop** (on the web tab or `GET /stop`) to unpin immediately.
 
-> **No AirLabs key?** The display still works — it shows live position, calculates ETA from groundspeed, and infers origin/destination from heading and OpenSky history. Just no official scheduled times.
+> **AirLabs is rate-limited (~1000 calls/month)**, so it is queried **only for the one flight you pin** — never for nearby traffic, which relies entirely on OpenSky + adsbdb. When you pin an ICAO callsign, the matching IATA flight number is derived from adsbdb so AirLabs can still be looked up.
+>
+> **No AirLabs key?** Tracking still works: origin/destination come from adsbdb, the **actual departure time** is read from OpenSky flight history, and ETA is computed from groundspeed. Only the scheduled times and the delay badge require an AirLabs key.
 
 ---
 

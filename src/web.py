@@ -127,7 +127,7 @@ def _track_payload(track_q):
         if o and dst and o.get("lat") and dst.get("lat") and lat:
             tot = haversine(o["lat"], o["lon"], dst["lat"], dst["lon"])
             if tot > 1:
-                frac = haversine(o["lat"], o["lon"], lat, lon) / tot
+                frac = max(0.0, min(1.0, haversine(o["lat"], o["lon"], lat, lon) / tot))
         if ctx["mode"] == "track" and dst and dst.get("lat") and state[9] and state[9] > 30:
             rem  = haversine(lat, lon, dst["lat"], dst["lon"])
             mins = rem / (state[9] * 3.6) * 60

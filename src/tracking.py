@@ -18,7 +18,7 @@ from src.config import (
     AIRLABS_KEY, AIRLABS_FLIGHT_URL,
     HOME_LAT, HOME_LON,
     TRACK_LINGER_S, IATA_TO_ICAO,
-    OPENSKY_STATES_URL,
+    OPENSKY_STATES_URL, OPENSKY_FLIGHTS_URL,
 )
 from src.flights import (
     haversine, bearing, compass,
@@ -75,6 +75,16 @@ def normalize_query(q: str) -> tuple[str, str]:
 _sched_cache: dict = {}
 
 
+def _hhmm(t):
+    """AirLabs returns 'YYYY-MM-DD HH:MM' (or just 'HH:MM'). Trim to HH:MM."""
+    if not t:
+        return None
+    s = str(t).strip()
+    if len(s) >= 16 and s[10] == " ":
+        return s[11:16]
+    return s[:5] if len(s) >= 5 else s
+
+
 def fetch_airlabs_status(iata_flight: str) -> dict:
     """
     Hit the AirLabs /flight endpoint for a single flight number.
@@ -96,11 +106,11 @@ def fetch_airlabs_status(iata_flight: str) -> dict:
         }, timeout=12)
         if r.ok:
             data = (r.json().get("response") or {})
-            dep_sched  = data.get("dep_time")        # "HH:MM"
-            dep_actual = data.get("dep_actual")      # actual departure
-            arr_sched  = data.get("arr_time")        # scheduled arrival
-            arr_est    = data.get("arr_estimated") or data.get("arr_actual")
-            delay      = data.get("delayed")         # minutes or None
+            dep_sched  = _hhmm(data.get("dep_time"))        # scheduled departure
+            dep_actual = _hhmm(data.get("dep_actual"))      # actual departure
+            arr_sched  = _hhmm(data.get("arr_time"))        # scheduled arrival
+            arr_est    = _hhmm(data.get("arr_estimated") or data.get("arr_actual"))
+            delay      = data.get("delayed")                # minutes or None
 
             result = {
                 "status":        data.get("status", ""),
@@ -163,6 +173,54 @@ def find_icao24_by_callsign(norm: str) -> str | None:
     return None
 
 
+_dep_time_cache: dict = {}
+
+
+def opensky_dep_arr_times(icao24: str, callsign: str) -> dict:
+    """
+    Fallback actual departure / arrival times (local HH:MM) from OpenSky flight
+    history, used when AirLabs isn't configured. No scheduled times or delay are
+    derivable here, so only dep_actual / arr_estimated are returned.
+    """
+    if not icao24:
+        return {}
+    hit = _dep_time_cache.get(icao24)
+    if hit and time.time() - hit[0] < 600:
+        return hit[1]
+    out = {}
+    tok = get_opensky_token()
+    if not tok:
+        _dep_time_cache[icao24] = (time.time(), out)
+        return out
+    now = int(time.time())
+    try:
+        r = requests.get(OPENSKY_FLIGHTS_URL,
+                         params={"icao24": icao24.lower(),
+                                 "begin": now - 129600, "end": now},
+                         headers={"Authorization": f"Bearer {tok}"}, timeout=15)
+        if r.ok:
+            flights = r.json()
+            if isinstance(flights, list) and flights:
+                flights.sort(key=lambda f: f.get("lastSeen", 0), reverse=True)
+                top = flights[0]
+                first_seen = top.get("firstSeen")
+                last_seen  = top.get("lastSeen")
+                top_cs = (top.get("callsign") or "").strip().upper()
+                # Only attribute times if this record is the current flight
+                if top_cs == (callsign or "").upper():
+                    if first_seen:
+                        out["dep_actual"] = datetime.fromtimestamp(
+                            first_seen).strftime("%H:%M")
+                    # arrival only meaningful once the aircraft is back on ground
+                    if last_seen and (now - last_seen) > 60:
+                        out["arr_estimated"] = datetime.fromtimestamp(
+                            last_seen).strftime("%H:%M")
+    except Exception as e:
+        logger.debug("OpenSky dep/arr time error: %s", e)
+    _dep_time_cache[icao24] = (time.time(), out)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # track_context — called every loop iteration when a flight is pinned
 # ---------------------------------------------------------------------------
@@ -184,6 +242,17 @@ def track_context() -> dict | None:
 
     if not norm:
         return None
+
+    # If the user pinned an ICAO callsign we have no IATA number for AirLabs.
+    # adsbdb's route record carries the IATA callsign (e.g. UAL456 -> UA456),
+    # so derive it once. AirLabs is only ever queried for this one pinned flight.
+    if not iata and norm:
+        fr0 = fetch_route(norm)
+        if fr0 and fr0.get("callsign_iata"):
+            iata = fr0["callsign_iata"]
+            with TRACK_LOCK:
+                if TRACK["norm"] == norm:
+                    TRACK["iata"] = iata
 
     # --- AirLabs status (uses IATA number if we have one) --------------------
     sched = fetch_airlabs_status(iata) if iata else {}
@@ -214,6 +283,13 @@ def track_context() -> dict | None:
     with TRACK_LOCK:
         if TRACK["norm"] == norm:
             TRACK["icao24"] = icao
+
+    # AirLabs preferred; backfill actual dep/arr times from OpenSky history when
+    # AirLabs is absent or didn't supply them.
+    if icao and not (sched.get("dep_actual") and sched.get("arr_estimated")):
+        fallback = opensky_dep_arr_times(icao, norm)
+        for k, v in fallback.items():
+            sched.setdefault(k, v)
 
     now      = time.time()
     airborne = state is not None and not state[8]
