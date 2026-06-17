@@ -79,6 +79,12 @@ def main():
         if loop_start - last_wx > WX_INTERVAL:
             weather = fetch_weather()
             last_wx = loop_start
+            # Publish weather immediately so the web dashboard renders during the
+            # first (slow) nearby scan instead of appearing blank on cold start.
+            with STATE_LOCK:
+                STATE["weather"] = weather
+                if not STATE.get("updated_at"):
+                    STATE["updated_at"] = datetime.utcnow().isoformat() + "Z"
 
         # --- Check for pinned flight -----------------------------------------
         with TRACK_LOCK:
