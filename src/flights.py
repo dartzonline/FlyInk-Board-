@@ -284,12 +284,13 @@ def fetch_route(cs):
 
 
 def fetch_aircraft(icao24):
+    """Return (registration, type, registration_country)."""
     if not icao24:
-        return None, None
+        return None, None, None
     hit = _ac_cache.get(icao24)
     if hit and time.time() - hit[0] < 86400:
         return hit[1]
-    reg = typ = None
+    reg = typ = reg_country = None
     try:
         r = requests.get(ADSBDB_AIRCRAFT.format(icao24), timeout=8,
                          headers={"User-Agent": "flyink-board"})
@@ -298,10 +299,13 @@ def fetch_aircraft(icao24):
             if isinstance(ac, dict):
                 reg = ac.get("registration") or None
                 typ = ac.get("type") or ac.get("icao_type") or None
+                reg_country = (ac.get("registered_owner_country_name")
+                               or ac.get("registered_owner_country_iso_name")
+                               or None)
     except Exception as e:
         logger.debug("Aircraft lookup error: %s", e)
-    _ac_cache[icao24] = (time.time(), (reg, typ))
-    return reg, typ
+    _ac_cache[icao24] = (time.time(), (reg, typ, reg_country))
+    return reg, typ, reg_country
 
 
 # ---------------------------------------------------------------------------
@@ -348,12 +352,13 @@ def enrich(state):
     vrate  = state[11]
 
     info = {
-        "reg": None, "type": None, "airline": None, "airline_code": None,
+        "reg": None, "type": None, "reg_country": None,
+        "airline": None, "airline_code": None,
         "flight": cs, "from_code": None, "from_city": None, "from_country": None,
         "to_code": None, "to_city": None, "to_country": None,
     }
     info["airline"], info["airline_code"] = airline_of(cs)
-    info["reg"], info["type"] = fetch_aircraft(icao24)
+    info["reg"], info["type"], info["reg_country"] = fetch_aircraft(icao24)
 
     has_airline = bool(info["airline"])
 

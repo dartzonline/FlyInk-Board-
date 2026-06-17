@@ -65,6 +65,7 @@ else:
     W, H = 480, 800   # simulation fallback (portrait)
 
 PAD         = int(W * 0.058)
+KM_TO_MI    = 0.621371
 TEMP_SYMBOL = "F" if TEMP_UNIT == "fahrenheit" else "C"
 WIND_LABEL  = {"mph": "mph", "kmh": "km/h", "ms": "m/s", "kn": "kt"}[WIND_UNIT]
 
@@ -287,7 +288,7 @@ def draw_lower(img, d, state, info, dist_km, brg, kind, weather, caption):
         tf = fit_font(info["type"].upper(), int(W * 0.9), 34)
         d.text((W/2, 322), info["type"].upper(), font=tf,
                fill=col("BLUE"), anchor="mm")
-    d.text((W/2, 360), f"{dist_km:.0f} KM {compass(brg)} OF YOU",
+    d.text((W/2, 360), f"{dist_km * KM_TO_MI:.0f} MI {compass(brg)} OF YOU",
            font=font(20), fill=col("RED"), anchor="mm")
     d.line([PAD, 386, W-PAD, 386], fill=col("BLACK"), width=1)
 
@@ -305,13 +306,9 @@ def draw_lower(img, d, state, info, dist_km, brg, kind, weather, caption):
            font=font(14), fill=col("RED"), anchor="mm")
     draw_radar(img, d, W/2, 600, 80, dist_km, brg, state[10], kind)
 
-    # Origin / destination either side of the radar, in the free margins.
-    # Prefer country, fall back to city then code so the space is never empty.
+    # Aircraft identity either side of the radar, in the free margins:
+    # registration country on the left, registration number on the right.
     margin_w = int((W/2 - 80) - PAD - 6)   # width of the gap beside the radar
-    from_txt = (info.get("from_country") or info.get("from_city")
-                or info.get("from_code"))
-    to_txt   = (info.get("to_country") or info.get("to_city")
-                or info.get("to_code"))
 
     def _radar_label(cx, head, txt):
         d.text((cx, 588), head, font=font(11), fill=col("RED"), anchor="mm")
@@ -321,15 +318,15 @@ def draw_lower(img, d, state, info, dist_km, brg, kind, weather, caption):
 
     left_cx  = PAD + margin_w/2
     right_cx = W - PAD - margin_w/2
-    if from_txt:
-        _radar_label(left_cx, "FROM", from_txt)
-    if to_txt:
-        _radar_label(right_cx, "TO", to_txt)
-    # If a side is unknown, fill it with home range/bearing so neither margin
-    # of the radar reads as dead empty space.
-    if not from_txt and dist_km is not None:
-        _radar_label(left_cx, "RANGE", f"{dist_km:.0f} KM")
-    if not to_txt and brg is not None:
+    reg_country = info.get("reg_country")
+    reg         = info.get("reg")
+    if reg_country:
+        _radar_label(left_cx, "COUNTRY", reg_country)
+    elif dist_km is not None:
+        _radar_label(left_cx, "RANGE", f"{dist_km * KM_TO_MI:.0f} MI")
+    if reg:
+        _radar_label(right_cx, "REG", reg)
+    elif brg is not None:
         _radar_label(right_cx, "BEARING", f"{brg:.0f}° {compass(brg)}")
 
     d.text((W/2, 690), caption, font=font(12, reg=True),
@@ -437,7 +434,7 @@ def draw_view(state, dist_km, weather, total_nearby):
         d.text((W/2, yC+18), info["flight"] or "----", font=cf,
                fill=col("BLACK"), anchor="mm")
 
-    cap = f"{total_nearby} NEARBY · {RADAR_RANGE_KM} KM"
+    cap = f"{total_nearby} NEARBY · {RADAR_RANGE_KM * KM_TO_MI:.0f} MI"
     ct  = cpu_temp()
     if ct:
         cap += f" · CPU {ct}"

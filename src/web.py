@@ -10,7 +10,9 @@ from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
-from src.config import CONTROL_PORT, LOGO_DIR, HOME_LAT, HOME_LON
+from src.config import CONTROL_PORT, LOGO_DIR, HOME_LAT, HOME_LON, RADAR_RANGE_KM
+
+KM_TO_MI = 0.621371
 from src.display import INKY_AVAILABLE, get_net, cpu_temp
 from src.tracking import TRACK, TRACK_LOCK, normalize_query
 
@@ -566,7 +568,7 @@ _HTML = r"""<!doctype html>
     <div class="stat"><label>Top airline</label><span id="st-top">--</span></div>
   </div>
   <div id="radar-wrap">
-    <div id="radar-title">Radar — 120 km range</div>
+    <div id="radar-title">Radar</div>
     <div class="radar-screen-container">
       <div id="radar-map"></div>
       <div class="radar-sweep"></div>
@@ -637,6 +639,12 @@ const REFRESH_MS  = 15000;
 let _nextRefresh  = Date.now() + REFRESH_MS;
 let _health = {};
 
+const KM_TO_MI = 0.621371;
+function mi(km, digits = 0) {
+  if (km == null) return null;
+  return (km * KM_TO_MI).toFixed(digits);
+}
+
 // ── tabs / keyboard ──────────────────────────────────────────────────────────
 function showTab(name, btn) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -705,24 +713,23 @@ function initMap(home) {
     maxZoom: 18
   }).addTo(_map);
 
-  // Fit bounds precisely so range matches the SVG radar rings
-  const range_km = 120;
+  // Fit bounds precisely so the map range matches the configured radar range
+  // (the same RADAR_RANGE_KM used by the SVG rings), centred on HOME.
+  const range_km = (home.range_km || 80);
   // half-width of the map container in km to match SVG R=145 inside size=320
   const half_width_km = range_km * (160 / 145);
-  const dLat = half_width_km / 111.32;
-  const dLon = half_width_km / (111.32 * Math.cos(lat * Math.PI / 180));
-  
-  _map.fitBounds([
-    [lat - dLat, lon - dLon],
-    [lat + dLat, lon + dLon]
-  ], { animate: false });
+  const fit = () => {
+    const dLat = half_width_km / 111.32;
+    const dLon = half_width_km / (111.32 * Math.cos(lat * Math.PI / 180));
+    _map.fitBounds([[lat - dLat, lon - dLon], [lat + dLat, lon + dLon]],
+                   { animate: false });
+  };
+  fit();
 
   // The container is often zero-size on first paint (hidden tab / late layout),
-  // which makes Leaflet settle on the wrong center. Re-assert once it's sized.
-  setTimeout(() => {
-    _map.invalidateSize();
-    _map.setView([lat, lon]);
-  }, 200);
+  // which makes Leaflet settle on the wrong center. Re-fit once it's sized so
+  // the zoom level reflects the real radar range, not a stale default.
+  setTimeout(() => { _map.invalidateSize(); fit(); }, 200);
 }
 
 function getPlaneIcon(track, col, callsign) {
@@ -766,12 +773,18 @@ window.showFlight = async function(callsign) {
   showTab('showing', btns[1]);
 };
 
-function drawRadar(flights, range_km = 120) {
+function drawRadar(flights, range_km) {
   const svg  = document.getElementById('radar-svg');
   const size = 320, cx = 160, cy = 160, R = 145;
 
-  if (_s.home && typeof L !== 'undefined') {
-    initMap(_s.home);
+  const home = _s.home || {};
+  if (range_km == null) range_km = home.range_km || 80;
+  const range_mi = home.range_mi || Math.round(range_km * KM_TO_MI);
+  const titleEl = document.getElementById('radar-title');
+  if (titleEl) titleEl.textContent = 'Radar — ' + range_mi + ' mi range';
+
+  if (home.lat != null && typeof L !== 'undefined') {
+    initMap(home);
   }
 
   let html = '';
@@ -831,6 +844,7 @@ function drawRadar(flights, range_km = 120) {
             ${f.from_code ? `<b>${f.from_code}</b> ➔ <b>${f.to_code || '?'}</b>` : 'No Route Info'}<br>
             Alt: ${f.alt_ft ? f.alt_ft.toLocaleString() + ' ft' : '?'}<br>
             Spd: ${f.spd_kt ? f.spd_kt + ' kt' : '?'}<br>
+            ${f.dist_km != null ? 'Dist: ' + mi(f.dist_km) + ' mi<br>' : ''}
             <button onclick="trackFlightFromMap('${f.callsign}')" style="margin-top:6px; width:100%; border:none; background:#c0392b; color:#fff; padding:3px; border-radius:3px; font-weight:bold; cursor:pointer;">Track Flight</button>
           </div>
         `;
@@ -922,7 +936,7 @@ function renderNearby(currentCs) {
       <td style="white-space:nowrap">${route}</td>
       <td>${f.alt_ft ? f.alt_ft.toLocaleString()+' ft' : '--'}</td>
       <td>${f.spd_kt ? f.spd_kt+' kt' : '--'}</td>
-      <td>${f.dist_km ? f.dist_km.toFixed(0)+' km' : '--'}</td>
+      <td>${f.dist_km != null ? mi(f.dist_km)+' mi' : '--'}</td>
       <td>${phaseBadge(f.vrate||0, f.on_ground)}</td>
     </tr>`;
   }).join('');
@@ -975,7 +989,7 @@ function renderShowing(cur) {
         <div class="meta-item"><label>Track</label>
           <span>${cur.track_deg != null ? cur.track_deg+'°' : '--'}</span></div>
         <div class="meta-item"><label>Distance</label>
-          <span>${cur.dist_km ? cur.dist_km.toFixed(0)+' km' : '--'}</span></div>
+          <span>${cur.dist_km != null ? mi(cur.dist_km)+' mi' : '--'}</span></div>
         <div class="meta-item"><label>Phase</label>
           <span>${phaseBadge(cur.vrate||0, cur.on_ground)}</span></div>
       </div>
@@ -1050,7 +1064,7 @@ function renderTrack(track) {
       ${cell('Ground Speed', st.spd_kt!=null ? st.spd_kt+' kt' : '--')}
       ${cell('Vertical', vsTxt, vsCls)}
       ${cell('Heading', st.track_deg!=null ? st.track_deg+'° '+(st.track_cmp||'') : '--')}
-      ${cell('From You', st.dist_km!=null ? st.dist_km+' km '+(st.bearing_cmp||'') : '--')}
+      ${cell('From You', st.dist_km!=null ? mi(st.dist_km)+' mi '+(st.bearing_cmp||'') : '--')}
       ${cell('Position', (st.lat!=null && st.lon!=null) ? st.lat.toFixed(2)+', '+st.lon.toFixed(2) : '--')}
     </div>`;
   }
@@ -1327,7 +1341,9 @@ class _Handler(BaseHTTPRequestHandler):
             "track":      _track_payload(track_q),
             "queued":     queued,
             "updated_at": upd,
-            "home":       {"lat": HOME_LAT, "lon": HOME_LON},
+            "home":       {"lat": HOME_LAT, "lon": HOME_LON,
+                           "range_km": RADAR_RANGE_KM,
+                           "range_mi": round(RADAR_RANGE_KM * KM_TO_MI)},
         }
         return json.dumps(payload, default=str).encode()
 
