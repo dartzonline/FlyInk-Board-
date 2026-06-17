@@ -304,6 +304,26 @@ def draw_lower(img, d, state, info, dist_km, brg, kind, weather, caption):
     d.text((W/2, 500), "RANGE & BEARING FROM HOME",
            font=font(14), fill=col("RED"), anchor="mm")
     draw_radar(img, d, W/2, 600, 80, dist_km, brg, state[10], kind)
+
+    # Origin / destination country either side of the radar, in the free margins.
+    margin_w = int((W/2 - 80) - PAD - 6)   # width of the gap beside the radar
+    from_country = info.get("from_country")
+    to_country   = info.get("to_country")
+    if from_country:
+        d.text((PAD + margin_w/2, 588), "FROM",
+               font=font(11), fill=col("RED"), anchor="mm")
+        d.text((PAD + margin_w/2, 610),
+               from_country.upper(),
+               font=fit_font(from_country.upper(), margin_w, 14, 9),
+               fill=col("BLACK"), anchor="mm")
+    if to_country:
+        d.text((W - PAD - margin_w/2, 588), "TO",
+               font=font(11), fill=col("RED"), anchor="mm")
+        d.text((W - PAD - margin_w/2, 610),
+               to_country.upper(),
+               font=fit_font(to_country.upper(), margin_w, 14, 9),
+               fill=col("BLACK"), anchor="mm")
+
     d.text((W/2, 690), caption, font=font(12, reg=True),
            fill=col("BLACK"), anchor="mm")
     d.line([PAD, 708, W-PAD, 708], fill=col("RED"), width=2)
@@ -314,6 +334,9 @@ def draw_lower(img, d, state, info, dist_km, brg, kind, weather, caption):
     d.text((W-PAD, 734), now.strftime("%I:%M %p").lstrip("0"),
            font=font(30), fill=col("BLACK"), anchor="rm")
 
+    # Footer split into three non-overlapping zones across the width so the
+    # weather, condition, and host/IP never collide.
+    third = (W - 2*PAD) / 3
     t  = weather.get("temperature")
     w  = weather.get("windspeed")
     wd = weather.get("winddirection")
@@ -325,17 +348,18 @@ def draw_lower(img, d, state, info, dist_km, brg, kind, weather, caption):
         parts.append(f"{w} {WIND_LABEL}{wdir}")
     wx = "  ·  ".join(parts)
     if wx:
-        d.text((PAD, 766), wx, font=fit_font(wx, int(W*0.46), 15),
+        d.text((PAD, 766), wx, font=fit_font(wx, int(third-8), 15),
                fill=col("BLACK"), anchor="lm")
     cond = weather_desc(weather.get("weathercode"))
     if cond:
-        d.text((W/2, 766), cond.upper(), font=font(13),
+        d.text((W/2, 766), cond.upper(),
+               font=fit_font(cond.upper(), int(third-8), 13, 9),
                fill=col("RED"), anchor="mm")
     host, ip = get_net()
     netinfo = f"{host} · {ip}" if (host and ip) else (ip or host or "")
     if netinfo:
         d.text((W-PAD, 766), netinfo,
-               font=fit_font(netinfo, int(W*0.42), 14, 10),
+               font=fit_font(netinfo, int(third-8), 14, 9),
                fill=col("BLACK"), anchor="rm")
 
 

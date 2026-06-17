@@ -256,10 +256,11 @@ def _airport_obj(o):
     if not o:
         return None
     return {
-        "code": o.get("iata_code") or o.get("icao_code"),
-        "city": o.get("municipality") or o.get("name"),
-        "lat":  _to_float(o.get("latitude")),
-        "lon":  _to_float(o.get("longitude")),
+        "code":    o.get("iata_code") or o.get("icao_code"),
+        "city":    o.get("municipality") or o.get("name"),
+        "country": o.get("country_name") or o.get("country_iso_name"),
+        "lat":     _to_float(o.get("latitude")),
+        "lon":     _to_float(o.get("longitude")),
     }
 
 
@@ -348,8 +349,8 @@ def enrich(state):
 
     info = {
         "reg": None, "type": None, "airline": None, "airline_code": None,
-        "flight": cs, "from_code": None, "from_city": None,
-        "to_code": None, "to_city": None,
+        "flight": cs, "from_code": None, "from_city": None, "from_country": None,
+        "to_code": None, "to_city": None, "to_country": None,
     }
     info["airline"], info["airline_code"] = airline_of(cs)
     info["reg"], info["type"] = fetch_aircraft(icao24)
@@ -396,8 +397,10 @@ def enrich(state):
 
     if origin:
         info["from_code"], info["from_city"] = origin["code"], origin["city"]
+        info["from_country"] = origin.get("country")
     if dest:
         info["to_code"],   info["to_city"]   = dest["code"],   dest["city"]
+        info["to_country"] = dest.get("country")
     return info
 
 

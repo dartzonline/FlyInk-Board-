@@ -26,6 +26,7 @@ def _flight_summary(state, dist_km) -> dict:
     alt_m  = state[13] if state[13] is not None else state[7]
     alt_ft = round(alt_m * 3.281) if alt_m is not None else None
     spd_kt = round(state[9] * 1.94384) if state[9] is not None else None
+    vrate_fpm = round(state[11] * 196.85) if state[11] is not None else None
     brg = bearing(HOME_LAT, HOME_LON, lat, lon) if (lat is not None and lon is not None) else None
 
     info = {}
@@ -44,11 +45,13 @@ def _flight_summary(state, dist_km) -> dict:
         "reg":          info.get("reg"),
         "from_code":    info.get("from_code"),
         "from_city":    info.get("from_city"),
+        "from_country": info.get("from_country"),
         "to_code":      info.get("to_code"),
         "to_city":      info.get("to_city"),
+        "to_country":   info.get("to_country"),
         "alt_ft":       alt_ft,
         "spd_kt":       spd_kt,
-        "vrate":        state[11],
+        "vrate":        vrate_fpm,
         "on_ground":    bool(state[8]),
         "track_deg":    state[10],
         "bearing_deg":  round(brg, 1) if brg is not None else None,
