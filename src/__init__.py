@@ -1,3 +1,1 @@
-"""
-Source package for the Inky Flight Tracker.
-"""
+"""FlyInk Board — src package."""
