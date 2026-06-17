@@ -25,6 +25,19 @@ STATE = {
     "updated_at": None,
 }
 
+# One-shot "show this flight next" queue. The main loop pops it, renders the
+# flight once on the Inky, then resumes the normal nearest-flight rotation.
+QUEUE_LOCK = threading.Lock()
+QUEUE = {"callsign": None}
+
+
+def pop_queued():
+    """Return and clear the queued callsign, or None."""
+    with QUEUE_LOCK:
+        cs = QUEUE["callsign"]
+        QUEUE["callsign"] = None
+    return cs
+
 # tiny ring buffer so the stats tab has something to chew on
 _seen_history = []          # list of (timestamp, callsign, airline, alt_ft, spd_kt)
 _history_lock = threading.Lock()
@@ -90,17 +103,26 @@ def _track_payload(track_q):
     if not ctx:
         return None
 
-    sched    = ctx.get("sched") or {}
+    sched    = dict(ctx.get("sched") or {})
     state    = ctx.get("state")
+    norm     = ctx.get("norm")
     frac     = 0.0
     eta_line = ""
 
+    from src.flights import haversine, fetch_route, _airport_obj
+    cs  = (state[1] or "").strip() if state else (norm or "")
+    fr  = fetch_route(cs)
+    o   = _airport_obj(fr.get("origin"))      if fr else None
+    dst = _airport_obj(fr.get("destination")) if fr else None
+
+    # Surface origin/destination codes so the track tab can show the route even
+    # when no AirLabs schedule is configured. AirLabs values take precedence.
+    if not sched.get("dep_iata") and o and o.get("code"):
+        sched["dep_iata"] = o["code"]
+    if not sched.get("arr_iata") and dst and dst.get("code"):
+        sched["arr_iata"] = dst["code"]
+
     if state:
-        from src.flights import haversine, fetch_route, _airport_obj
-        cs  = (state[1] or "").strip()
-        fr  = fetch_route(cs)
-        o   = _airport_obj(fr["origin"])      if fr else None
-        dst = _airport_obj(fr["destination"]) if fr else None
         lat, lon = state[6], state[5]
         if o and dst and o.get("lat") and dst.get("lat") and lat:
             tot = haversine(o["lat"], o["lon"], dst["lat"], dst["lon"])
@@ -518,13 +540,14 @@ _HTML = r"""<!doctype html>
         <th onclick="sortBy('callsign')">Flight <span class="sort-arrow">↕</span></th>
         <th onclick="sortBy('airline')">Airline <span class="sort-arrow">↕</span></th>
         <th class="type-cell" onclick="sortBy('type')">Type <span class="sort-arrow">↕</span></th>
+        <th onclick="sortBy('from_code')">Route <span class="sort-arrow">↕</span></th>
         <th onclick="sortBy('alt_ft')">Altitude <span class="sort-arrow">↕</span></th>
         <th onclick="sortBy('spd_kt')">Speed <span class="sort-arrow">↕</span></th>
         <th onclick="sortBy('dist_km')">Distance <span class="sort-arrow">↕</span></th>
         <th>Phase</th>
       </tr>
     </thead>
-    <tbody id="nearby-body"><tr><td colspan="8" style="text-align:center;color:var(--muted);padding:2rem">Scanning the skies…</td></tr></tbody>
+    <tbody id="nearby-body"><tr><td colspan="9" style="text-align:center;color:var(--muted);padding:2rem">Scanning the skies…</td></tr></tbody>
   </table>
 </div>
 
@@ -649,6 +672,13 @@ function initMap(home) {
     [lat - dLat, lon - dLon],
     [lat + dLat, lon + dLon]
   ], { animate: false });
+
+  // The container is often zero-size on first paint (hidden tab / late layout),
+  // which makes Leaflet settle on the wrong center. Re-assert once it's sized.
+  setTimeout(() => {
+    _map.invalidateSize();
+    _map.setView([lat, lon]);
+  }, 200);
 }
 
 function getPlaneIcon(track, col, callsign) {
@@ -678,6 +708,18 @@ window.trackFlightFromMap = async function(callsign) {
   setTimeout(fetchAll, 600);
   const btns = document.querySelectorAll('nav button');
   showTab('track', btns[2]);
+};
+
+// Click a nearby flight: queue it on the Inky (shown once) and switch the
+// web "Now Showing" panel to it immediately.
+window.showFlight = async function(callsign) {
+  if (!callsign) return;
+  const f = (_nearby || []).find(x => (x.callsign||'').toUpperCase() === callsign.toUpperCase());
+  if (f) { renderShowing(f); }
+  toast('Queued ' + callsign + ' for the display ✈');
+  try { await fetch('/show?flight=' + encodeURIComponent(callsign)); } catch(e) {}
+  const btns = document.querySelectorAll('nav button');
+  showTab('showing', btns[1]);
 };
 
 function drawRadar(flights, range_km = 120) {
@@ -816,18 +858,24 @@ function renderNearby(currentCs) {
   document.getElementById('filter-count').textContent =
     _filter ? `${rows.length} / ${_nearby.length} flights` : '';
   if (!rows.length) {
-    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:2rem">
+    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:2rem">
       ${_filter ? 'No matching flights.' : 'No aircraft nearby.'}</td></tr>`;
     return;
   }
   tbody.innerHTML = rows.map(f => {
     const cur = f.callsign === currentCs;
-    return `<tr class="${cur ? 'current-row' : ''}">
+    const route = (f.from_code || f.to_code)
+      ? `<b>${f.from_code||'?'}</b> → <b>${f.to_code||'?'}</b>`
+      : '<span style="color:var(--muted)">--</span>';
+    return `<tr class="${cur ? 'current-row' : ''}" style="cursor:pointer"
+        title="Click to show ${f.callsign||''} on the display"
+        onclick="showFlight('${f.callsign||''}')">
       <td class="logo-cell">${logoImg(f.airline_code)}</td>
       <td><span class="cs">${f.callsign||'--'}</span>
           ${cur ? ' <span style="color:var(--red);font-size:.7rem">●</span>' : ''}</td>
       <td>${f.airline||'--'}</td>
       <td class="type-cell">${f.type||'--'}</td>
+      <td style="white-space:nowrap">${route}</td>
       <td>${f.alt_ft ? f.alt_ft.toLocaleString()+' ft' : '--'}</td>
       <td>${f.spd_kt ? f.spd_kt+' kt' : '--'}</td>
       <td>${f.dist_km ? f.dist_km.toFixed(0)+' km' : '--'}</td>
@@ -1163,6 +1211,14 @@ class _Handler(BaseHTTPRequestHandler):
                 log.info("tracking %s → norm=%s iata=%s", fl, norm, iata)
             self._resp(b'{"ok":true}', "application/json")
 
+        elif p.path == "/show":
+            cs = (qs.get("flight") or [""])[0].strip().upper()
+            if cs:
+                with QUEUE_LOCK:
+                    QUEUE["callsign"] = cs
+                log.info("queued %s for one-shot display", cs)
+            self._resp(b'{"ok":true}', "application/json")
+
         elif p.path == "/stop":
             with TRACK_LOCK:
                 TRACK.update(query=None, norm=None, iata=None, icao24=None, landed_at=None)
@@ -1181,12 +1237,15 @@ class _Handler(BaseHTTPRequestHandler):
 
         with TRACK_LOCK:
             track_q = TRACK.get("query")
+        with QUEUE_LOCK:
+            queued = QUEUE.get("callsign")
 
         payload = {
             "nearby":     nearby,
             "current":    current,
             "weather":    weather,
             "track":      _track_payload(track_q),
+            "queued":     queued,
             "updated_at": upd,
             "home":       {"lat": HOME_LAT, "lon": HOME_LON},
         }

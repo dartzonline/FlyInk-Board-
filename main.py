@@ -17,7 +17,7 @@ from src.flights  import get_nearby, haversine, bearing, enrich, classify_kind
 from src.weather  import fetch_weather
 from src.tracking import track_context, TRACK, TRACK_LOCK
 from src.display  import draw_view, draw_idle, draw_tracking
-from src.web      import start_control_server, STATE, STATE_LOCK, record_nearby
+from src.web      import start_control_server, STATE, STATE_LOCK, record_nearby, pop_queued
 
 
 def _flight_summary(state, dist_km) -> dict:
@@ -143,11 +143,23 @@ def main():
                 STATE["weather"]    = weather
                 STATE["updated_at"] = datetime.utcnow().isoformat() + "Z"
         else:
-            # Pick the closest flight
-            best_state, best_dist = nearby[0]
+            # A web click can queue one flight to be shown next, just once.
+            queued_cs = pop_queued()
+            chosen_idx = 0
+            if queued_cs:
+                for i, (s, _d) in enumerate(nearby):
+                    if (s[1] or "").strip().upper() == queued_cs:
+                        chosen_idx = i
+                        logger.info("Showing queued flight %s (one-shot).", queued_cs)
+                        break
+                else:
+                    logger.info("Queued flight %s no longer nearby; showing closest.",
+                                queued_cs)
+
+            best_state, best_dist = nearby[chosen_idx]
             draw_view(best_state, best_dist, weather, len(nearby))
 
-            current_summary = nearby_summaries[0] if nearby_summaries else None
+            current_summary = nearby_summaries[chosen_idx] if nearby_summaries else None
             with STATE_LOCK:
                 STATE["nearby"]     = nearby_summaries
                 STATE["current"]    = current_summary

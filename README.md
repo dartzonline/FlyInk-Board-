@@ -2,7 +2,7 @@
 
 A live overhead-flight dashboard for the **Pimoroni Inky Impression 7.3"** colour e-paper display, piloted by a Raspberry Pi. Every few minutes it sweeps the radar for the closest aircraft cruising above you, figures out where it took off and where it's landing, draws a type-specific silhouette, and renders a clean glass-cockpit-style dashboard — mini radar scope, local weather, and Pi telemetry included.
 
-Pin any specific flight number from your phone and the display switches to a live tracking screen with a real-time progress bar, scheduled times, and delay status. A companion web dashboard at `:8080` shows all nearby traffic and lets you control tracking from any device on your network. The dashboard now shows live uptime, control-port, display-mode, and tracking state plus a `/api/health` endpoint for quick diagnostics.
+Pin any specific flight number from your phone and the display switches to a live tracking screen with a real-time progress bar, scheduled times, and delay status. A companion web dashboard at `:8080` shows all nearby traffic — including each flight's origin → destination — and lets you control tracking or click any nearby flight to push it to the e-ink display, from any device on your network. The dashboard now shows live uptime, control-port, display-mode, and tracking state plus a `/api/health` endpoint for quick diagnostics.
 
 ![FlyInk Board showing a commercial flight](images/screen_commercial.png)
 
@@ -32,7 +32,7 @@ Pin any specific flight number from your phone and the display switches to a liv
 ## Features
 
 - **Closest-aircraft dashboard** — Refreshes automatically and locks onto the nearest aircraft, skipping the one it just showed to keep the rotation fresh.
-- **Smart route resolution** — Combines live climb/descent vectors, flight-data lookups, and OpenSky flight history to show real `ORIGIN → DEST` airports. Shows a dash rather than guessing blindly.
+- **Smart route resolution** — Combines live climb/descent vectors, OpenSky flight history, and adsbdb's route database (sanity-checked against the aircraft's position so it never shows an off-corridor route) to display real `ORIGIN → DEST` airports. Shows a dash rather than guessing blindly. Priority: live motion → flight history → corridor-checked schedule.
 - **Flight tracking mode** — Pin any flight number via the web UI or a direct URL. The Inky display switches to a dedicated tracking screen showing a live progress bar, scheduled departure/arrival times, revised times, and delay badges. Auto-clears 10 minutes after landing.
 - **AirLabs schedule data** — Real scheduled and actual departure/arrival times plus delay information, sourced from [AirLabs](https://airlabs.co) (free API key required; degrades gracefully without one).
 *(The dashboard is drawn in portrait and rotated 90° for a picture-frame mount — set `ROTATE` to match your physical setup.)*
@@ -192,11 +192,17 @@ The dark-themed dashboard has three tabs:
 
 | Tab | What you see |
 |---|---|
-| **Nearby Flights** | Live table of all aircraft in range — callsign, airline, type, altitude, speed, distance, and colour-coded flight phase (CLIMB / CRUISE / DESC / GND). The flight currently on the Inky screen is highlighted. |
+| **Nearby Flights** | Live table of all aircraft in range — callsign, airline, type, **route (origin → destination)**, altitude, speed, distance, and colour-coded flight phase (CLIMB / CRUISE / DESC / GND). The flight currently on the Inky screen is highlighted. **Click any row** to queue that flight onto the e-ink display (shown once, then the normal closest-flight rotation resumes). |
 | **Now Showing** | Card view of the flight currently displayed on the e-ink screen — full route, registration, type, altitude, speed, and bearing. |
-| **Track a Flight** | Flight number input + Track/Stop buttons. Shows live tracking status, departure → arrival airports, progress bar with aircraft emoji, scheduled and revised times, and delay badge. |
+| **Track a Flight** | Flight number input + Track/Stop buttons. Shows live tracking status, departure → arrival airports, progress bar with aircraft emoji, scheduled and revised times, and delay badge. The route airports are resolved from adsbdb even without an AirLabs key. |
+
+The mini radar map centres on your configured `HOME_LAT` / `HOME_LON` and plots live aircraft positions around it.
 
 The dashboard auto-refreshes every 15 seconds via the `/api/state` JSON endpoint and uses `/api/health` for its live system status cards — no page reload needed.
+
+### Showing a specific nearby flight on the Inky
+
+Click a row in **Nearby Flights** (or call `GET /show?flight=<callsign>`) to bump that aircraft to the front of the queue. The board draws it on the next refresh, then automatically falls back to showing the closest aircraft.
 
 ---
 
