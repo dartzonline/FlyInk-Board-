@@ -356,7 +356,28 @@ def enrich(state):
 
     has_airline = bool(info["airline"])
 
-    # Candidate A: live motion inference
+    # Candidate A: schedule DB (adsbdb), kept only if the plane is on its corridor
+    db_origin = db_dest = None
+    fr = fetch_route(cs)
+    if fr:
+        air = fr.get("airline") or {}
+        if air.get("name"):
+            info["airline"] = air["name"]
+        if air.get("icao"):
+            info["airline_code"] = air["icao"]
+        o = _airport_obj(fr.get("origin"))
+        d = _airport_obj(fr.get("destination"))
+        if o and d and on_corridor(lat, lon, o, d):
+            # Orient by heading: destination = the endpoint we're flying toward
+            if (track is not None and o.get("lat") is not None and
+                    d.get("lat") is not None):
+                ao = angle_off(track, bearing(lat, lon, o["lat"], o["lon"]))
+                ad = angle_off(track, bearing(lat, lon, d["lat"], d["lon"]))
+                db_origin, db_dest = (d, o) if ao < ad else (o, d)
+            else:
+                db_origin, db_dest = o, d
+
+    # Candidate B: live motion inference
     dep = departure_airport(lat, lon, track, vrate, alt_m, has_airline)
     arr = arrival_airport(lat, lon, track, vrate, alt_m, has_airline)
 
@@ -365,13 +386,13 @@ def enrich(state):
     h_origin = resolve_airport(h_dep) if h_dep else None
     h_dest   = resolve_airport(h_arr) if h_arr else None
 
-    # Resolve by priority: live motion > history only (skip unreliable schedule DB)
-    origin = dep or h_origin
-    dest   = arr or h_dest
+    # Resolve by priority: live motion > history > corridor-checked schedule DB
+    origin = dep or h_origin or db_origin
+    dest   = arr or h_dest or db_dest
 
     # Guard: never show origin == destination
     if origin and dest and origin["code"] == dest["code"]:
-        dest = None
+        dest = db_dest if (db_dest and db_dest["code"] != origin["code"]) else None
 
     if origin:
         info["from_code"], info["from_city"] = origin["code"], origin["city"]
