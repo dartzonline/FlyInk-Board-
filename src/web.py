@@ -1,6 +1,8 @@
 import json
 import os
 import logging
+import platform
+import shutil
 import threading
 import time
 from collections import Counter
@@ -9,9 +11,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 from src.config import CONTROL_PORT, LOGO_DIR, HOME_LAT, HOME_LON
+from src.display import INKY_AVAILABLE, get_net, cpu_temp
 from src.tracking import TRACK, TRACK_LOCK, normalize_query
 
 log = logging.getLogger(__name__)
+SERVER_STARTED_AT = time.time()
 
 STATE_LOCK = threading.Lock()
 STATE = {
@@ -434,6 +438,15 @@ _HTML = r"""<!doctype html>
   }
   .wx-val { font-size:2rem; font-weight:700; margin:.4rem 0 }
   .wx-label { font-size:.7rem; color:var(--muted); text-transform:uppercase; letter-spacing:.06em }
+  /* ---- System status ---- */
+  .sys-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:.75rem; margin-bottom:1rem }
+  .sys-card {
+    background:var(--card); border:1px solid var(--border);
+    border-radius:8px; padding:1rem;
+  }
+  .sys-label { font-size:.7rem; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; margin-bottom:.25rem }
+  .sys-val { font-size:1.15rem; font-weight:700 }
+  .sys-sub { font-size:.8rem; color:var(--muted); margin-top:.2rem }
 
   @media(max-width:600px) {
     .route { font-size:1.8rem }
@@ -555,6 +568,7 @@ let _filter   = '';
 let _tickInterval = null;
 const REFRESH_MS  = 15000;
 let _nextRefresh  = Date.now() + REFRESH_MS;
+let _health = {};
 
 // ── tabs / keyboard ──────────────────────────────────────────────────────────
 function showTab(name, btn) {
@@ -600,7 +614,7 @@ let _map = null;
 let _planeMarkers = {};
 
 function initMap(home) {
-  if (_map || !home || !home.lat) return;
+  if (_map || !home || !home.lat || typeof L === 'undefined') return;
 
   const lat = parseFloat(home.lat);
   const lon = parseFloat(home.lon);
@@ -670,7 +684,7 @@ function drawRadar(flights, range_km = 120) {
   const svg  = document.getElementById('radar-svg');
   const size = 320, cx = 160, cy = 160, R = 145;
 
-  if (_s.home) {
+  if (_s.home && typeof L !== 'undefined') {
     initMap(_s.home);
   }
 
@@ -697,6 +711,14 @@ function drawRadar(flights, range_km = 120) {
   html += `<circle cx="${cx}" cy="${cy}" r="8" fill="none" stroke="#c0392b" stroke-width="1" opacity=".4"/>`;
 
   svg.innerHTML = html;
+
+  if (typeof L === 'undefined') {
+    const radarMap = document.getElementById('radar-map');
+    if (radarMap && !radarMap.dataset.fallbackShown) {
+      radarMap.dataset.fallbackShown = '1';
+      radarMap.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:rgba(232,232,232,.7);font-size:.85rem;text-align:center;padding:1rem">Radar map unavailable offline.<br>SVG radar remains active.</div>';
+    }
+  }
 
   // Update Leaflet plane markers
   if (_map) {
@@ -946,16 +968,58 @@ function renderTrack(track) {
 }
 
 // ── weather tab ──────────────────────────────────────────────────────────────
-function renderWeather(wx) {
+function renderWeather(wx, health) {
   const el = document.getElementById('weather-content');
   if (!wx || !Object.keys(wx).length) {
     el.innerHTML = '<p style="text-align:center;color:var(--muted);padding:2rem">No weather data.</p>';
     return;
   }
-  const t     = wx.temperature, w = wx.windspeed, wd = wx.winddirection, code = wx.weathercode;
-  const dirs  = ['N','NE','E','SE','S','SW','W','NW'];
-  const wdir  = wd != null ? dirs[Math.round(wd/45) % 8] : '';
-  el.innerHTML = `<div class="wx-grid">
+  const t = wx.temperature, w = wx.windspeed, wd = wx.winddirection, code = wx.weathercode;
+  const dirs = ['N','NE','E','SE','S','SW','W','NW'];
+  const wdir = wd != null ? dirs[Math.round(wd/45) % 8] : '';
+  const uptime = health && health.uptime_s != null ? formatUptime(health.uptime_s) : '--';
+  const displayMode = health && health.display_mode ? health.display_mode : '--';
+  const bindHost = health && health.bind_host ? health.bind_host : '--';
+  const port = health && health.control_port ? health.control_port : '8080';
+  const inkyState = health && health.inky_available ? 'Connected' : 'Simulation';
+  const hostLine = health && health.hostname ? health.hostname : '--';
+  const ipLine = health && health.ip_address ? health.ip_address : '--';
+  const cpuLine = health && health.cpu_temp_c ? health.cpu_temp_c : '--';
+  const loadLine = health && health.load_avg && health.load_avg['1m'] != null ? `${health.load_avg['1m']}` : '--';
+
+  el.innerHTML = `<div class="sys-grid">
+    <div class="sys-card">
+      <div class="sys-label">Dashboard</div>
+      <div class="sys-val">${bindHost}:${port}</div>
+      <div class="sys-sub">Open from any device on the LAN</div>
+    </div>
+    <div class="sys-card">
+      <div class="sys-label">Host / IP</div>
+      <div class="sys-val">${hostLine}</div>
+      <div class="sys-sub">${ipLine}</div>
+    </div>
+    <div class="sys-card">
+      <div class="sys-label">Uptime</div>
+      <div class="sys-val">${uptime}</div>
+      <div class="sys-sub">Since FlyInk started</div>
+    </div>
+    <div class="sys-card">
+      <div class="sys-label">Display</div>
+      <div class="sys-val">${inkyState}</div>
+      <div class="sys-sub">${displayMode}</div>
+    </div>
+    <div class="sys-card">
+      <div class="sys-label">Tracking</div>
+      <div class="sys-val">${health && health.track_active ? 'Pinned' : 'Idle'}</div>
+      <div class="sys-sub">Live control state</div>
+    </div>
+    <div class="sys-card">
+      <div class="sys-label">CPU / Load</div>
+      <div class="sys-val">${cpuLine}</div>
+      <div class="sys-sub">1m load ${loadLine}</div>
+    </div>
+  </div>
+  <div class="wx-grid">
     ${t != null ? `<div class="wx-card"><div class="wx-label">Temperature</div>
       <div class="wx-val">${t}°</div></div>` : ''}
     ${w != null ? `<div class="wx-card"><div class="wx-label">Wind</div>
@@ -966,13 +1030,22 @@ function renderWeather(wx) {
       <div style="color:var(--muted);font-size:.8rem">${wxDesc(code)}</div></div>` : ''}
   </div>`;
 
-  // header pill
   const parts = [];
   if (t != null) parts.push(`${t}°`);
   if (w != null) parts.push(`${w}mph ${wdir}`);
-  document.getElementById('wx-temp').textContent = parts[0]||'';
-  document.getElementById('wx-wind').textContent = parts[1]||'';
+  document.getElementById('wx-temp').textContent = parts[0] || '';
+  document.getElementById('wx-wind').textContent = parts[1] || '';
   document.getElementById('wx-cond').textContent = wxEmoji(code);
+}
+
+function formatUptime(seconds) {
+  const total = Math.max(0, Math.floor(seconds || 0));
+  const hours = Math.floor(total / 3600);
+  const mins = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  if (hours > 0) return `${hours}h ${mins}m`;
+  if (mins > 0) return `${mins}m ${secs}s`;
+  return `${secs}s`;
 }
 
 function wxEmoji(c) {
@@ -996,12 +1069,14 @@ function wxDesc(c) {
 // ── data fetch ───────────────────────────────────────────────────────────────
 async function fetchAll() {
   try {
-    const [stateRes, statsRes] = await Promise.all([
+    const [stateRes, statsRes, healthRes] = await Promise.all([
       fetch('/api/state'),
       fetch('/api/stats'),
+      fetch('/api/health'),
     ]);
     _s = stateRes.ok ? await stateRes.json() : {};
     const stats = statsRes.ok ? await statsRes.json() : {};
+    _health = healthRes.ok ? await healthRes.json() : {};
 
     _nearby = _s.nearby || [];
     const cur = _s.current;
@@ -1011,6 +1086,7 @@ async function fetchAll() {
     renderTrack(_s.track);
     renderStats(_nearby, stats);
     renderWeather(_s.weather || {});
+  renderWeather(_s.weather || {}, _health);
 
     const t = _s.updated_at ? new Date(_s.updated_at).toLocaleTimeString() : '--:--';
     document.getElementById('updated-time').textContent = t;
@@ -1067,6 +1143,9 @@ class _Handler(BaseHTTPRequestHandler):
         elif p.path == "/api/stats":
             self._resp(json.dumps(_stats_snapshot()).encode(), "application/json")
 
+        elif p.path == "/api/health":
+            self._resp(json.dumps(_health_snapshot()).encode(), "application/json")
+
         elif p.path.startswith("/logos/"):
             code = p.path[7:].replace(".png", "").upper()
             data = _logo_bytes(code)
@@ -1114,11 +1193,74 @@ class _Handler(BaseHTTPRequestHandler):
         return json.dumps(payload, default=str).encode()
 
 
+def _health_snapshot():
+  with TRACK_LOCK:
+    track_active = bool(TRACK.get("norm"))
+
+  host, ip = get_net()
+  cpu_c = cpu_temp()
+  disk = shutil.disk_usage(os.getcwd())
+
+  load_1m = load_5m = load_15m = None
+  try:
+    load_1m, load_5m, load_15m = [round(v, 2) for v in os.getloadavg()]
+  except Exception:
+    pass
+
+  mem_total_mb = mem_free_mb = mem_avail_mb = None
+  try:
+    meminfo = {}
+    with open("/proc/meminfo", encoding="utf-8") as handle:
+      for line in handle:
+        key, value = line.split(":", 1)
+        meminfo[key] = int(value.strip().split()[0])
+    mem_total_mb = round(meminfo["MemTotal"] / 1024, 0)
+    mem_free_mb = round(meminfo.get("MemFree", 0) / 1024, 0)
+    mem_avail_mb = round(meminfo.get("MemAvailable", 0) / 1024, 0)
+  except Exception:
+    pass
+
+  return {
+    "started_at": datetime.utcfromtimestamp(SERVER_STARTED_AT).isoformat() + "Z",
+    "uptime_s": int(time.time() - SERVER_STARTED_AT),
+    "control_port": CONTROL_PORT,
+    "bind_host": "0.0.0.0",
+    "hostname": host,
+    "ip_address": ip,
+    "inky_available": INKY_AVAILABLE,
+    "display_mode": "hardware" if INKY_AVAILABLE else "simulation",
+    "track_active": track_active,
+    "platform": platform.platform(),
+    "python_version": platform.python_version(),
+    "cpu_temp_c": cpu_c,
+    "load_avg": {
+      "1m": load_1m,
+      "5m": load_5m,
+      "15m": load_15m,
+    },
+    "memory": {
+      "total_mb": mem_total_mb,
+      "free_mb": mem_free_mb,
+      "available_mb": mem_avail_mb,
+    },
+    "disk": {
+      "path": os.getcwd(),
+      "free_gb": round(disk.free / (1024 ** 3), 2),
+      "used_pct": round((disk.used / disk.total) * 100, 1) if disk.total else None,
+    },
+  }
+
+
+class _ReuseAddrHTTPServer(ThreadingHTTPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+
 # ── startup ───────────────────────────────────────────────────────────────────
 
 def start_control_server():
     try:
-        srv = ThreadingHTTPServer(("0.0.0.0", CONTROL_PORT), _Handler)
+        srv = _ReuseAddrHTTPServer(("0.0.0.0", CONTROL_PORT), _Handler)
         t   = threading.Thread(target=srv.serve_forever, daemon=True, name="web-srv")
         t.start()
         log.info("dashboard → http://0.0.0.0:%d/", CONTROL_PORT)

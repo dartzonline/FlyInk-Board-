@@ -2,7 +2,7 @@
 
 A live overhead-flight dashboard for the **Pimoroni Inky Impression 7.3"** colour e-paper display, piloted by a Raspberry Pi. Every few minutes it sweeps the radar for the closest aircraft cruising above you, figures out where it took off and where it's landing, draws a type-specific silhouette, and renders a clean glass-cockpit-style dashboard — mini radar scope, local weather, and Pi telemetry included.
 
-Pin any specific flight number from your phone and the display switches to a live tracking screen with a real-time progress bar, scheduled times, and delay status. A companion web dashboard at `:8080` shows all nearby traffic and lets you control tracking from any device on your network.
+Pin any specific flight number from your phone and the display switches to a live tracking screen with a real-time progress bar, scheduled times, and delay status. A companion web dashboard at `:8080` shows all nearby traffic and lets you control tracking from any device on your network. The dashboard now shows live uptime, control-port, display-mode, and tracking state plus a `/api/health` endpoint for quick diagnostics.
 
 ![FlyInk Board showing a commercial flight](images/screen_commercial.png)
 
@@ -16,7 +16,7 @@ Pin any specific flight number from your phone and the display switches to a liv
 - [Under the Cowling](#under-the-cowling)
 - [Pre-flight Setup](#pre-flight-setup)
 - [Configuration](#configuration)
-- [Getting OpenSky credentials](#getting-opensky-credentials)
+- [Raspberry Pi Quick Start](#raspberry-pi-quick-start)
 - [Airline logos](#airline-logos)
 - [Cleared for Takeoff](#cleared-for-takeoff)
 - [Web Dashboard](#web-dashboard)
@@ -35,23 +35,8 @@ Pin any specific flight number from your phone and the display switches to a liv
 - **Smart route resolution** — Combines live climb/descent vectors, flight-data lookups, and OpenSky flight history to show real `ORIGIN → DEST` airports. Shows a dash rather than guessing blindly.
 - **Flight tracking mode** — Pin any flight number via the web UI or a direct URL. The Inky display switches to a dedicated tracking screen showing a live progress bar, scheduled departure/arrival times, revised times, and delay badges. Auto-clears 10 minutes after landing.
 - **AirLabs schedule data** — Real scheduled and actual departure/arrival times plus delay information, sourced from [AirLabs](https://airlabs.co) (free API key required; degrades gracefully without one).
-- **Web dashboard** — Dark-themed three-tab SPA served on port `:8080`. View all nearby traffic, see what's on screen now, and control flight tracking — all from your phone or laptop.
-- **Type-specific icons** — Distinct top-down silhouettes for jumbos, narrowbody jets, bizjets, turboprops, light GA, and helicopters — rotated dynamically to match live heading.
-- **Mini radar scope** — Proper range/bearing display with your location at the centre and live traffic plotted as blips.
-- **Local weather & device footer** — Temperature, wind direction, sky conditions, local time, hostname/IP, and CPU core temp.
-- **Airline logo support** — Airline liveries painted in the header, dithered to the e-paper palette. Run `download_logos.sh` once to pull a full library.
-
----
-
-## The Gallery
-
-| Commercial flight | Regional flight | General aviation | Idle |
-|---|---|---|---|
-| ![Commercial](images/screen_commercial.png) | ![Regional](images/screen_regional.png) | ![GA](images/screen_ga.png) | ![Idle](images/screen_idle.png) |
-
 *(The dashboard is drawn in portrait and rotated 90° for a picture-frame mount — set `ROTATE` to match your physical setup.)*
 
----
 
 ## Hardware you'll need
 
@@ -124,23 +109,8 @@ sudo reboot
 
 If you see *"some pins we need are in use … CS0"*, add `dtoverlay=spi0-0cs` to `/boot/firmware/config.txt` and reboot.
 
-### 3. Clone and install
-
-```bash
-git clone git@github.com:dartzonline/FlyInk-Board-.git
-cd FlyInk-Board-
-source ~/.virtualenvs/pimoroni/bin/activate
-pip install -r requirements.txt
-```
-
-> **Why a virtualenv?** Recent Pi OS blocks system-wide `pip` (PEP 668). The `pimoroni` venv keeps the airspace clear.
-
----
-
-## Configuration
 
 All settings live in `src/config.py` and can be overridden with environment variables or a `.env` file:
-
 ```bash
 # .env (never committed)
 HOME_LAT=30.6333
@@ -193,6 +163,21 @@ python main.py
 
 The first refresh takes ~20–35 s (e-paper full redraw), then updates every `DISPLAY_INTERVAL` seconds. Watch the terminal for log lines.
 
+## Raspberry Pi Quick Start
+
+Use this when you want to run the project directly on a Raspberry Pi instead of as a boot service:
+
+1. Enable SPI and I2C, then reboot.
+2. Create or activate a Python virtualenv on the Pi.
+3. Install the dependencies with `pip install -r requirements.txt`.
+4. Start the app with `python main.py`.
+5. Open `http://<pi-ip-address>:8080/` from your phone or laptop on the same network.
+
+Helpful checks while it is running:
+
+- `http://<pi-ip-address>:8080/api/state` for the current dashboard payload.
+- `http://<pi-ip-address>:8080/api/health` for uptime, display mode, and tracking state.
+
 ---
 
 ## Web Dashboard
@@ -211,7 +196,7 @@ The dark-themed dashboard has three tabs:
 | **Now Showing** | Card view of the flight currently displayed on the e-ink screen — full route, registration, type, altitude, speed, and bearing. |
 | **Track a Flight** | Flight number input + Track/Stop buttons. Shows live tracking status, departure → arrival airports, progress bar with aircraft emoji, scheduled and revised times, and delay badge. |
 
-The dashboard auto-refreshes every 15 seconds via the `/api/state` JSON endpoint — no page reload needed.
+The dashboard auto-refreshes every 15 seconds via the `/api/state` JSON endpoint and uses `/api/health` for its live system status cards — no page reload needed.
 
 ---
 
@@ -294,6 +279,7 @@ Everything is easy to tune in `src/config.py`:
 | *"some pins we need are in use … CS0"* | Add `dtoverlay=spi0-0cs` to `/boot/firmware/config.txt` and reboot. |
 | `externally-managed-environment` on `pip` | Use the `pimoroni` virtualenv or add `--break-system-packages`. |
 | Always shows "No aircraft nearby" | Quiet skies or no network. Widen `SEARCH_RADII` and check coordinates. |
+| Web dashboard shows no flights | Most often this is missing or invalid OpenSky credentials, a rate-limit, or local TLS/clock issues. Check `OPENSKY_CLIENT_ID` / `OPENSKY_CLIENT_SECRET`, confirm the Pi clock is correct, and make sure CA certificates are installed. |
 | Route shows only "DEPARTING X" | Flight's destination not published yet; expected. OpenSky credentials improve origin accuracy significantly. |
 | Tracked flight not found | Flight may not have departed yet (mode: AWAITING). It'll appear once airborne. |
 | Scheduled times show `--` | No AirLabs key set. Add `AIRLABS_KEY` to your `.env` — free from airlabs.co. |
