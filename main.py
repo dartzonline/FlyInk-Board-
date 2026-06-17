@@ -92,6 +92,9 @@ def main():
     # When tracking is active we alternate: tracking screen → nearest nearby → repeat.
     # This boolean flips every cycle so the pilot still gets a local traffic update.
     show_nearby_interlude = False
+    # Track whether the previous on-screen flight was commercial (had an airline),
+    # so we can avoid showing two non-commercial flights back to back.
+    last_shown_commercial = True
 
     while True:
         loop_start = time.time()
@@ -186,7 +189,24 @@ def main():
                     logger.info("Queued flight %s no longer nearby; showing closest.",
                                 queued_cs)
 
+            # Variety guard: never show two non-commercial flights in a row. If
+            # the closest is non-commercial and the last screen was too, jump to
+            # the nearest commercial flight (one with an airline) instead.
+            if not queued_cs:
+                def _is_commercial(i):
+                    return bool(nearby_summaries[i].get("airline")) if i < len(nearby_summaries) else False
+
+                if not _is_commercial(chosen_idx) and not last_shown_commercial:
+                    for i in range(len(nearby)):
+                        if _is_commercial(i):
+                            chosen_idx = i
+                            logger.info("Variety: swapping to nearest commercial flight %s.",
+                                        (nearby[i][0][1] or "").strip())
+                            break
+
             best_state, best_dist = nearby[chosen_idx]
+            last_shown_commercial = (bool(nearby_summaries[chosen_idx].get("airline"))
+                                     if chosen_idx < len(nearby_summaries) else False)
             draw_view(best_state, best_dist, weather, len(nearby))
 
             current_summary = nearby_summaries[chosen_idx] if nearby_summaries else None
