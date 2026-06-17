@@ -109,7 +109,8 @@ def _track_payload(track_q):
     frac     = 0.0
     eta_line = ""
 
-    from src.flights import haversine, fetch_route, _airport_obj
+    from src.flights import (haversine, bearing, fetch_route, _airport_obj,
+                             enrich, compass)
     cs  = (state[1] or "").strip() if state else (norm or "")
     fr  = fetch_route(cs)
     o   = _airport_obj(fr.get("origin"))      if fr else None
@@ -122,6 +123,7 @@ def _track_payload(track_q):
     if not sched.get("arr_iata") and dst and dst.get("code"):
         sched["arr_iata"] = dst["code"]
 
+    stats = {}
     if state:
         lat, lon = state[6], state[5]
         if o and dst and o.get("lat") and dst.get("lat") and lat:
@@ -134,12 +136,38 @@ def _track_payload(track_q):
             eta  = (datetime.now() + timedelta(minutes=mins)).strftime("%I:%M %p").lstrip("0")
             eta_line = f"ETA ~{eta}  ·  {int(mins)} min left"
 
+        # Live telemetry for the tracked flight.
+        info  = enrich(state)
+        alt_m = state[13] if state[13] is not None else state[7]
+        trk   = state[10]
+        brg   = (bearing(HOME_LAT, HOME_LON, lat, lon)
+                 if lat is not None and lon is not None else None)
+        stats = {
+            "airline":      info.get("airline"),
+            "airline_code": info.get("airline_code"),
+            "type":         info.get("type"),
+            "reg":          info.get("reg"),
+            "icao24":       (state[0] or "").strip().upper() or None,
+            "alt_ft":       round(alt_m * 3.281) if alt_m is not None else None,
+            "spd_kt":       round(state[9] * 1.94384) if state[9] is not None else None,
+            "vrate_fpm":    round(state[11] * 196.85) if state[11] is not None else None,
+            "track_deg":    round(trk) if trk is not None else None,
+            "track_cmp":    compass(trk) if trk is not None else None,
+            "on_ground":    bool(state[8]),
+            "dist_km":      round(haversine(HOME_LAT, HOME_LON, lat, lon), 1)
+                            if lat is not None and lon is not None else None,
+            "bearing_cmp":  compass(brg) if brg is not None else None,
+            "lat":          lat,
+            "lon":          lon,
+        }
+
     return {
         "query":    track_q,
         "mode":     ctx["mode"],
         "sched":    sched,
         "frac":     round(frac, 3),
         "eta_line": eta_line,
+        "stats":    stats,
     }
 
 
@@ -438,6 +466,19 @@ _HTML = r"""<!doctype html>
   .time-col .revised { color:var(--red); font-size:.82rem; margin-top:.15rem }
   .time-col.right { text-align:right }
   .eta-line { font-size:.82rem; color:var(--muted); margin-top:.6rem; text-align:center }
+  .track-meta { font-size:.82rem; color:var(--muted); text-align:center;
+                margin-top:.5rem; padding-top:.5rem; border-top:1px solid var(--border) }
+  .track-meta b { color:var(--text); font-weight:600 }
+  .stat-grid {
+    display:grid; grid-template-columns:repeat(3,1fr); gap:.6rem; margin-top:.75rem;
+    padding-top:.75rem; border-top:1px solid var(--border);
+  }
+  .stat-cell { text-align:center }
+  .stat-cell label { font-size:.62rem; color:var(--muted); text-transform:uppercase;
+                     letter-spacing:.06em; display:block; margin-bottom:.2rem }
+  .stat-cell .v { font-size:1.05rem; font-weight:700 }
+  .stat-cell .v.climb { color:var(--green) }
+  .stat-cell .v.desc  { color:var(--orange) }
   #no-track { color:var(--muted); text-align:center; padding:2.5rem; font-size:.9rem }
 
   /* ---- Toast ---- */
@@ -977,6 +1018,37 @@ function renderTrack(track) {
   const modeLabel = track.mode === 'track' ? 'En Route'
                   : track.mode === 'landed' ? 'Landed' : 'Awaiting';
 
+  const st = track.stats || {};
+  // Identity line: airline · type · reg · mode-S.
+  const idBits = [];
+  if (st.airline) idBits.push(`<b>${st.airline}</b>`);
+  if (st.type)    idBits.push(st.type);
+  if (st.reg)     idBits.push(st.reg);
+  if (st.icao24)  idBits.push(st.icao24);
+  const metaHtml = idBits.length
+    ? `<div class="track-meta">${idBits.join(' · ')}</div>` : '';
+
+  // Live telemetry grid (only when we have a live position).
+  let statsHtml = '';
+  if (st.alt_ft != null || st.spd_kt != null || st.dist_km != null) {
+    const vs = st.vrate_fpm;
+    const vsCls = vs == null ? '' : vs > 100 ? 'climb' : vs < -100 ? 'desc' : '';
+    const vsTxt = vs == null ? '--'
+                : Math.abs(vs) < 100 ? 'level'
+                : (vs > 0 ? '+' : '') + vs.toLocaleString() + ' fpm';
+    const cell = (label, val, cls) =>
+      `<div class="stat-cell"><label>${label}</label>` +
+      `<div class="v ${cls||''}">${val}</div></div>`;
+    statsHtml = `<div class="stat-grid">
+      ${cell('Altitude', st.on_ground ? 'GND' : (st.alt_ft!=null ? st.alt_ft.toLocaleString()+' ft' : '--'))}
+      ${cell('Ground Speed', st.spd_kt!=null ? st.spd_kt+' kt' : '--')}
+      ${cell('Vertical', vsTxt, vsCls)}
+      ${cell('Heading', st.track_deg!=null ? st.track_deg+'° '+(st.track_cmp||'') : '--')}
+      ${cell('From You', st.dist_km!=null ? st.dist_km+' km '+(st.bearing_cmp||'') : '--')}
+      ${cell('Position', (st.lat!=null && st.lon!=null) ? st.lat.toFixed(2)+', '+st.lon.toFixed(2) : '--')}
+    </div>`;
+  }
+
   el.innerHTML = `
     <div class="status-box">
       <div class="track-header">
@@ -1012,6 +1084,8 @@ function renderTrack(track) {
         </div>
       </div>
       ${track.eta_line ? `<div class="eta-line">${track.eta_line}</div>` : ''}
+      ${metaHtml}
+      ${statsHtml}
     </div>`;
 }
 
