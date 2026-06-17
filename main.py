@@ -46,6 +46,8 @@ def _flight_summary(state, dist_km) -> dict:
         "track_deg":   state[10],
         "bearing_deg": round(brg, 1) if brg is not None else None,
         "dist_km":     round(dist_km, 1) if dist_km is not None else None,
+        "lat":         lat,
+        "lon":         lon,
     }
 
 

@@ -125,6 +125,8 @@ _HTML = r"""<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>✈ FlyInk Board</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <style>
   :root {
     --red:#c0392b; --red2:#e74c3c; --dark:#0d0d0d; --mid:#181818;
@@ -227,7 +229,7 @@ _HTML = r"""<!doctype html>
   .badge-descend { background:#4a2c0a; color:#f0b27a }
   .badge-gnd     { background:#2a2a2a; color:#999 }
 
-  /* ---- Radar SVG ---- */
+  /* ---- Radar Wrap and Screen ---- */
   #radar-wrap {
     margin-bottom:1rem; background:var(--card);
     border:1px solid var(--border); border-radius:8px;
@@ -235,7 +237,72 @@ _HTML = r"""<!doctype html>
   }
   #radar-title { font-size:.7rem; color:var(--muted); text-transform:uppercase;
                  letter-spacing:.07em; margin-bottom:.5rem }
-  #radar-svg { display:block; margin:0 auto }
+  .radar-screen-container {
+    position: relative;
+    width: 320px;
+    height: 320px;
+    margin: 0 auto;
+    border-radius: 50%;
+    overflow: hidden;
+    border: 2px solid #2a2a2a;
+    box-shadow: 0 0 20px rgba(0,0,0,0.5), inset 0 0 20px rgba(0,0,0,0.8);
+    background: #0b0b0b;
+  }
+  #radar-map {
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+  }
+  #radar-svg {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 90;
+  }
+  .radar-sweep {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: conic-gradient(from 0deg, rgba(39, 174, 96, 0.15) 0deg, rgba(39, 174, 96, 0.03) 90deg, rgba(39, 174, 96, 0) 180deg);
+    border-radius: 50%;
+    pointer-events: none;
+    z-index: 100;
+    animation: radar-sweep 5s linear infinite;
+  }
+  @keyframes radar-sweep {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+  .plane-marker-icon {
+    background: none !important;
+    border: none !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+  }
+  
+  /* ---- Leaflet popup dark mode override ---- */
+  .leaflet-popup-content-wrapper, .leaflet-popup-tip {
+    background: #181818 !important;
+    color: #e8e8e8 !important;
+    border: 1px solid #2a2a2a;
+    box-shadow: 0 3px 14px rgba(0,0,0,0.6) !important;
+    border-radius: 6px !important;
+  }
+  .leaflet-popup-content {
+    margin: 8px 10px !important;
+    font-size: 11px !important;
+    line-height: 1.35 !important;
+  }
+  .leaflet-popup-close-button {
+    color: #888 !important;
+    padding: 4px 8px 0 0 !important;
+  }
 
   /* ---- Now Showing card ---- */
   .card {
@@ -421,7 +488,11 @@ _HTML = r"""<!doctype html>
   </div>
   <div id="radar-wrap">
     <div id="radar-title">Radar — 120 km range</div>
-    <svg id="radar-svg" width="320" height="320" viewBox="0 0 320 320"></svg>
+    <div class="radar-screen-container">
+      <div id="radar-map"></div>
+      <div class="radar-sweep"></div>
+      <svg id="radar-svg" width="320" height="320" viewBox="0 0 320 320"></svg>
+    </div>
   </div>
   <div id="filter-wrap">
     <input id="filter-input" type="text" placeholder="Filter flights…" oninput="applyFilter()">
@@ -491,6 +562,9 @@ function showTab(name, btn) {
   document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
   document.getElementById('tab-' + name).classList.add('active');
   btn.classList.add('active');
+  if (name === 'nearby' && _map) {
+    setTimeout(() => _map.invalidateSize(), 50);
+  }
 }
 
 document.addEventListener('keydown', e => {
@@ -521,50 +595,150 @@ function tickRing() {
 }
 setInterval(tickRing, 500);
 
-// ── radar SVG ────────────────────────────────────────────────────────────────
+// ── Leaflet Radar Map ────────────────────────────────────────────────────────
+let _map = null;
+let _planeMarkers = {};
+
+function initMap(home) {
+  if (_map || !home || !home.lat) return;
+
+  const lat = parseFloat(home.lat);
+  const lon = parseFloat(home.lon);
+
+  // Initialize Leaflet map
+  _map = L.map('radar-map', {
+    center: [lat, lon],
+    zoom: 9,
+    zoomControl: false,
+    attributionControl: false,
+    dragging: false,
+    scrollWheelZoom: false,
+    doubleClickZoom: false,
+    boxZoom: false,
+    keyboard: false,
+    touchZoom: false
+  });
+
+  // Dark sleek style without text labels to keep it uncluttered
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
+    maxZoom: 18
+  }).addTo(_map);
+
+  // Fit bounds precisely so range matches the SVG radar rings
+  const range_km = 120;
+  // half-width of the map container in km to match SVG R=145 inside size=320
+  const half_width_km = range_km * (160 / 145);
+  const dLat = half_width_km / 111.32;
+  const dLon = half_width_km / (111.32 * Math.cos(lat * Math.PI / 180));
+  
+  _map.fitBounds([
+    [lat - dLat, lon - dLon],
+    [lat + dLat, lon + dLon]
+  ], { animate: false });
+}
+
+function getPlaneIcon(track, col, callsign) {
+  const rot = track || 0;
+  const html = `
+    <div style="position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; width: 64px; height: 48px;">
+      <svg viewBox="0 0 24 24" width="20" height="20" style="transform: rotate(${rot}deg); display: block;">
+        <path fill="${col}" stroke="#000" stroke-width="0.5" d="M21,16V14L13,9V3.5A1.5,1.5 0 0,0 11.5,2A1.5,1.5 0 0,0 10,3.5V9L2,14V16L10,13.5V19L8,20.5V22L11.5,21L15,22V20.5L13,19V13.5L21,16Z"/>
+      </svg>
+      <span style="font-size: 8px; font-weight: bold; font-family: monospace; color: #fff; background: rgba(0,0,0,0.75); padding: 1px 3px; border-radius: 3px; margin-top: 2px; border: 1px solid #333; pointer-events: none; white-space: nowrap;">
+        ${callsign}
+      </span>
+    </div>
+  `;
+  return L.divIcon({
+    html: html,
+    className: 'plane-marker-icon',
+    iconSize: [64, 48],
+    iconAnchor: [32, 24]
+  });
+}
+
+window.trackFlightFromMap = async function(callsign) {
+  if (!callsign) return;
+  toast('Tracking ' + callsign + '…');
+  await fetch('/track?flight=' + encodeURIComponent(callsign));
+  setTimeout(fetchAll, 600);
+  const btns = document.querySelectorAll('nav button');
+  showTab('track', btns[2]);
+};
+
 function drawRadar(flights, range_km = 120) {
   const svg  = document.getElementById('radar-svg');
   const size = 320, cx = 160, cy = 160, R = 145;
+
+  if (_s.home) {
+    initMap(_s.home);
+  }
 
   let html = '';
   // rings
   [1, 0.66, 0.33].forEach(f => {
     const r = R * f;
-    html += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#1e1e1e" stroke-width="1"/>`;
+    html += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="rgba(39, 174, 96, 0.4)" stroke-dasharray="3, 3" stroke-width="1"/>`;
   });
   // compass ticks
   for (let a = 0; a < 360; a += 30) {
     const rad = a * Math.PI / 180;
     const x1 = cx + (R-8) * Math.sin(rad), y1 = cy - (R-8) * Math.cos(rad);
     const x2 = cx + R * Math.sin(rad),     y2 = cy - R * Math.cos(rad);
-    html += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#2a2a2a" stroke-width="1"/>`;
+    html += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="rgba(39, 174, 96, 0.3)" stroke-width="1"/>`;
   }
   // N/S/E/W labels
   const dirs = {N:[cx,cy-R-10], E:[cx+R+12,cy], S:[cx,cy+R+14], W:[cx-R-12,cy]};
   Object.entries(dirs).forEach(([d,[x,y]]) => {
-    html += `<text x="${x}" y="${y}" fill="#444" font-size="10" text-anchor="middle" dominant-baseline="middle">${d}</text>`;
+    html += `<text x="${x}" y="${y}" fill="rgba(39, 174, 96, 0.8)" font-size="10" font-weight="bold" font-family="sans-serif" text-anchor="middle" dominant-baseline="middle">${d}</text>`;
   });
   // home dot
   html += `<circle cx="${cx}" cy="${cy}" r="4" fill="#c0392b" opacity=".9"/>`;
-  html += `<circle cx="${cx}" cy="${cy}" r="8" fill="none" stroke="#c0392b" stroke-width="1" opacity=".3"/>`;
-
-  // aircraft blips
-  (flights || []).forEach(f => {
-    if (!f.bearing_deg && f.bearing_deg !== 0) return;
-    const dist = f.dist_km || 0;
-    const frac = Math.min(1, dist / range_km);
-    const rad  = f.bearing_deg * Math.PI / 180;
-    const px   = cx + R * frac * Math.sin(rad);
-    const py   = cy - R * frac * Math.cos(rad);
-    const col  = f.on_ground ? '#555' : (f.vrate > 100 ? '#2980b9' : f.vrate < -100 ? '#e67e22' : '#27ae60');
-    const rot  = f.track_deg || 0;
-    html += `<g transform="translate(${px},${py}) rotate(${rot})">
-      <polygon points="0,-6 3,4 0,2 -3,4" fill="${col}" opacity=".9"/>
-    </g>`;
-    html += `<text x="${px+8}" y="${py+4}" fill="#555" font-size="8" font-family="monospace">${f.callsign||''}</text>`;
-  });
+  html += `<circle cx="${cx}" cy="${cy}" r="8" fill="none" stroke="#c0392b" stroke-width="1" opacity=".4"/>`;
 
   svg.innerHTML = html;
+
+  // Update Leaflet plane markers
+  if (_map) {
+    const activeCallsigns = new Set();
+
+    (flights || []).forEach(f => {
+      if (!f.lat || !f.lon) return;
+      activeCallsigns.add(f.callsign);
+
+      const col = f.on_ground ? '#7f8c8d' : (f.vrate > 100 ? '#00b4d8' : f.vrate < -100 ? '#f3722c' : '#2ecc71');
+      const icon = getPlaneIcon(f.track_deg || 0, col, f.callsign || 'UNK');
+
+      if (_planeMarkers[f.callsign]) {
+        _planeMarkers[f.callsign].setLatLng([f.lat, f.lon]);
+        _planeMarkers[f.callsign].setIcon(icon);
+      } else {
+        const marker = L.marker([f.lat, f.lon], { icon: icon }).addTo(_map);
+        
+        const popupContent = `
+          <div style="font-family:sans-serif; font-size:11px; color:#ddd; line-height:1.4;">
+            <b style="color:#fff; font-size:12px;">${f.callsign || 'Unknown'}</b><br>
+            <span style="color:#aaa;">${f.airline || 'Unknown Airline'}</span><br>
+            <span style="font-family:monospace; background:#333; padding:1px 3px; border-radius:2px; font-size:9px; color:#fff;">${f.type || 'Type?'}</span><br>
+            ${f.from_code ? `<b>${f.from_code}</b> ➔ <b>${f.to_code || '?'}</b>` : 'No Route Info'}<br>
+            Alt: ${f.alt_ft ? f.alt_ft.toLocaleString() + ' ft' : '?'}<br>
+            Spd: ${f.spd_kt ? f.spd_kt + ' kt' : '?'}<br>
+            <button onclick="trackFlightFromMap('${f.callsign}')" style="margin-top:6px; width:100%; border:none; background:#c0392b; color:#fff; padding:3px; border-radius:3px; font-weight:bold; cursor:pointer;">Track Flight</button>
+          </div>
+        `;
+        marker.bindPopup(popupContent, { minWidth: 100, autoPan: false, offset: [0, -5] });
+        _planeMarkers[f.callsign] = marker;
+      }
+    });
+
+    // Remove old plane markers
+    Object.keys(_planeMarkers).forEach(cs => {
+      if (!activeCallsigns.has(cs)) {
+        _map.removeLayer(_planeMarkers[cs]);
+        delete _planeMarkers[cs];
+      }
+    });
+  }
 }
 
 // ── nearby table ─────────────────────────────────────────────────────────────
@@ -614,6 +788,9 @@ function renderNearby(currentCs) {
     const bv = b[_sortKey] ?? (typeof b[_sortKey] === 'string' ? '' : Infinity);
     return (av < bv ? -1 : av > bv ? 1 : 0) * mul;
   });
+
+  drawRadar(rows);
+
   document.getElementById('filter-count').textContent =
     _filter ? `${rows.length} / ${_nearby.length} flights` : '';
   if (!rows.length) {
@@ -697,6 +874,7 @@ let _prevTrackQuery = null;
 function renderTrack(track) {
   const el      = document.getElementById('track-content');
   const noTrack = document.getElementById('no-track');
+  if (!el || !noTrack) return;   // DOM not ready yet
   if (!track || !track.query) {
     noTrack.style.display = 'block';
     el.innerHTML = '';
@@ -833,7 +1011,6 @@ async function fetchAll() {
     renderTrack(_s.track);
     renderStats(_nearby, stats);
     renderWeather(_s.weather || {});
-    drawRadar(_nearby);
 
     const t = _s.updated_at ? new Date(_s.updated_at).toLocaleTimeString() : '--:--';
     document.getElementById('updated-time').textContent = t;
@@ -932,6 +1109,7 @@ class _Handler(BaseHTTPRequestHandler):
             "weather":    weather,
             "track":      _track_payload(track_q),
             "updated_at": upd,
+            "home":       {"lat": HOME_LAT, "lon": HOME_LON},
         }
         return json.dumps(payload, default=str).encode()
 
