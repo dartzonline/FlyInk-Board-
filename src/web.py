@@ -38,6 +38,12 @@ def pop_queued():
         QUEUE["callsign"] = None
     return cs
 
+
+def peek_queued():
+    """Return the queued callsign without clearing it (for change detection)."""
+    with QUEUE_LOCK:
+        return QUEUE["callsign"]
+
 # tiny ring buffer so the stats tab has something to chew on
 _seen_history = []          # list of (timestamp, callsign, airline, alt_ft, spd_kt)
 _history_lock = threading.Lock()
@@ -126,12 +132,8 @@ def _track_payload(track_q):
     stats = {}
     if state:
         lat, lon = state[6], state[5]
-        if o and dst and o.get("lat") and dst.get("lat") and lat:
-            tot = haversine(o["lat"], o["lon"], dst["lat"], dst["lon"])
-            if tot > 1:
-                frac = max(0.0, min(1.0, haversine(o["lat"], o["lon"], lat, lon) / tot))
-        if ctx["mode"] == "track" and dst and dst.get("lat") and state[9] and state[9] > 30:
-            rem  = haversine(lat, lon, dst["lat"], dst["lon"])
+        frac, rem = trk.route_progress(ctx["mode"], state, o, dst, lat, lon)
+        if ctx["mode"] == "track" and rem is not None and state[9] and state[9] > 30:
             mins = rem / (state[9] * 3.6) * 60
             eta  = (datetime.now() + timedelta(minutes=mins)).strftime("%I:%M %p").lstrip("0")
             eta_line = f"ETA ~{eta}  ·  {int(mins)} min left"
@@ -405,7 +407,8 @@ _HTML = r"""<!doctype html>
   .btn-track { background:var(--red); color:#fff }
   .btn-track:hover { background:#a93226 }
   .btn-stop  { background:#333; color:#ccc }
-  .btn-stop:hover { background:#444 }
+  .btn-stop:hover:not(:disabled) { background:#c0392b; color:#fff }
+  .btn-stop:disabled { opacity:.4; cursor:not-allowed }
 
   /* ---- Track status box ---- */
   .status-box {
@@ -607,7 +610,7 @@ _HTML = r"""<!doctype html>
            autocomplete="off" autocapitalize="characters"
            onkeydown="if(event.key==='Enter')trackFlight()">
     <button class="btn-track" id="btn-track" onclick="trackFlight()">Track</button>
-    <button class="btn-stop"  onclick="stopTracking()">Stop</button>
+    <button class="btn-stop"  id="btn-stop" onclick="stopTracking()" disabled>Stop</button>
   </div>
   <div id="track-content">
     <p id="no-track">No flight pinned. Type a flight number above.</p>
@@ -985,14 +988,17 @@ let _prevTrackQuery = null;
 function renderTrack(track) {
   const el      = document.getElementById('track-content');
   const noTrack = document.getElementById('no-track');
+  const stopBtn = document.getElementById('btn-stop');
   if (!el || !noTrack) return;   // DOM not ready yet
   if (!track || !track.query) {
     noTrack.style.display = 'block';
     el.innerHTML = '';
+    if (stopBtn) { stopBtn.disabled = true; stopBtn.textContent = 'Stop'; }
     if (_prevTrackQuery) toast('Tracking stopped.');
     _prevTrackQuery = null;
     return;
   }
+  if (stopBtn) { stopBtn.disabled = false; stopBtn.textContent = 'Stop ' + track.query.toUpperCase(); }
   if (track.query !== _prevTrackQuery) {
     toast(`Now tracking ${track.query.toUpperCase()} ✈`);
     _prevTrackQuery = track.query;

@@ -466,7 +466,8 @@ def draw_idle(weather):
 # ---------------------------------------------------------------------------
 
 def draw_tracking(ctx: dict, weather: dict):
-    from src.tracking import draw_progress, TRACK_LOCK, TRACK, TRACK_LINGER_S
+    from src.tracking import (draw_progress, route_progress,
+                              TRACK_LOCK, TRACK, TRACK_LINGER_S)
 
     mode  = ctx["mode"]
     sched = ctx.get("sched") or {}
@@ -543,11 +544,7 @@ def draw_tracking(ctx: dict, weather: dict):
     d.text((W-PAD, 180), d_code,
            font=fit_font(d_code, 130, 56), fill=col("BLACK"), anchor="rm")
 
-    frac = 1.0 if mode == "landed" else 0.0
-    if (state and o and dst and o.get("lat") and dst.get("lat") and lat):
-        tot = haversine(o["lat"], o["lon"], dst["lat"], dst["lon"])
-        if tot > 1:
-            frac = haversine(o["lat"], o["lon"], lat, lon) / tot
+    frac, rem_km = route_progress(mode, state, o, dst, lat, lon)
 
     draw_progress(img, d, PAD+78, W-PAD-78, 214, frac, kind, paste_icon, col)
 
@@ -568,13 +565,14 @@ def draw_tracking(ctx: dict, weather: dict):
         d.text((W-PAD, 264), f"→ {arr_est}",
                font=font(14), fill=col("RED"), anchor="rm")
 
-    # ETA from groundspeed (works without a schedule API key)
+    # ETA from groundspeed (works without a schedule API key). Remaining distance
+    # is the same value that positions the icon, so the "MIN LEFT" stays
+    # consistent with how far along the bar the plane sits.
     eta_line = ""
-    if (mode == "track" and state and dst and dst.get("lat")
+    if (mode == "track" and state and rem_km is not None
             and state[9] and state[9] > 30):
-        rem  = haversine(lat, lon, dst["lat"], dst["lon"])
         gs   = state[9] * 3.6
-        mins = rem / gs * 60
+        mins = rem_km / gs * 60
         eta  = (datetime.now() + timedelta(minutes=mins)).strftime(
             "%I:%M %p").lstrip("0")
         eta_line = f"ETA ~{eta}  ·  {mins:.0f} MIN LEFT"

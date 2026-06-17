@@ -17,7 +17,28 @@ from src.flights  import get_nearby, haversine, bearing, enrich, classify_kind
 from src.weather  import fetch_weather
 from src.tracking import track_context, TRACK, TRACK_LOCK
 from src.display  import draw_view, draw_idle, draw_tracking
-from src.web      import start_control_server, STATE, STATE_LOCK, record_nearby, pop_queued
+from src.web      import (start_control_server, STATE, STATE_LOCK,
+                          record_nearby, pop_queued, peek_queued)
+
+
+def _track_signature():
+    """Snapshot of the control state that, if changed, should wake the display."""
+    with TRACK_LOCK:
+        q = TRACK.get("query")
+    return (q, peek_queued())
+
+
+def _responsive_sleep(seconds):
+    """Sleep up to `seconds`, but wake early (within ~1s) if the pinned flight
+    is changed/stopped or a flight is queued from the web, so the e-ink reacts
+    promptly instead of waiting out the full refresh interval."""
+    baseline = _track_signature()
+    end = time.time() + seconds
+    while time.time() < end:
+        time.sleep(min(1.0, end - time.time()))
+        if _track_signature() != baseline:
+            logger.info("Control state changed — refreshing display early.")
+            return
 
 
 def _flight_summary(state, dist_km) -> dict:
@@ -123,7 +144,7 @@ def main():
                 # flip for next cycle
                 show_nearby_interlude = not show_nearby_interlude
                 elapsed = time.time() - loop_start
-                time.sleep(max(0, DISPLAY_INTERVAL - elapsed))
+                _responsive_sleep(max(0, DISPLAY_INTERVAL - elapsed))
                 continue
 
             # ctx is None → flight ended, reset interlude state and fall through
@@ -178,7 +199,7 @@ def main():
         elapsed = time.time() - loop_start
         sleep_s = max(0, DISPLAY_INTERVAL - elapsed)
         logger.debug("Loop took %.1f s, sleeping %.1f s.", elapsed, sleep_s)
-        time.sleep(sleep_s)
+        _responsive_sleep(sleep_s)
 
 
 if __name__ == "__main__":

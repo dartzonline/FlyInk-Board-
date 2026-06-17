@@ -69,6 +69,41 @@ def normalize_query(q: str) -> tuple[str, str]:
 
 
 # ---------------------------------------------------------------------------
+# Route progress — shared by the Inky tracking screen and the web track tab
+# ---------------------------------------------------------------------------
+
+def route_progress(mode, state, o, dst, lat, lon):
+    """
+    Return (frac, rem_km): how far along the route the aircraft is (0..1) and
+    the remaining distance to the destination in km.
+
+    Both are derived from the same geometry so the progress-bar icon position
+    and the "MIN LEFT"/ETA always agree. Uses the plane's distance to *both*
+    endpoints (d_from_origin / (d_from_origin + d_to_dest)) so an off-corridor
+    position is handled gracefully. If the two leg distances sum to far more
+    than the published route length the adsbdb route is stale (callsign reused
+    on a different leg), so we report (0.0, None) rather than a misleading bar.
+    """
+    if mode == "landed":
+        return 1.0, 0.0
+    if not (state and o and dst and o.get("lat") is not None
+            and dst.get("lat") is not None and lat is not None):
+        return 0.0, None
+
+    route = haversine(o["lat"], o["lon"], dst["lat"], dst["lon"])
+    d_from = haversine(o["lat"], o["lon"], lat, lon)
+    d_to   = haversine(lat, lon, dst["lat"], dst["lon"])
+    if route <= 1:
+        return 0.0, None
+    # Staleness guard: on a sane route the legs sum to roughly the route length.
+    if (d_from + d_to) > route * 1.6 + 60:
+        return 0.0, None
+
+    frac = max(0.0, min(1.0, d_from / (d_from + d_to)))
+    return frac, d_to
+
+
+# ---------------------------------------------------------------------------
 # AirLabs — live status + schedule for a pinned flight
 # ---------------------------------------------------------------------------
 
