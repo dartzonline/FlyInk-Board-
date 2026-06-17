@@ -133,7 +133,7 @@ _DASHBOARD = r"""<!doctype html>
   .delay-pos  { background:rgba(192,57,43,.25); color:#e74c3c }
   .delay-neg  { background:rgba(39,174,96,.25);  color:#27ae60 }
   .delay-zero { background:rgba(52,152,219,.25); color:#3498db }
-  #no-track   { color:var(--muted); text-align:center; padding:2rem }
+  #no-track   { color:var(--muted); text-align:center; padding:2rem; font-size:.95rem }
   .eta-line   { font-size:.9rem; color:var(--muted); margin-top:.5rem }
 
   @media(max-width:600px) {
