@@ -207,21 +207,16 @@ export OPENSKY_CLIENT_SECRET="your_client_secret"
 
 ## Airline logos (optional)
 
-If a logo file exists, it's shown in the header. Drop transparent PNGs into a
-`logos/` folder named by the airline's **ICAO code**:
+If a logo file exists, it's shown in the header. A helper script is included to download a comprehensive set of airline logos automatically:
 
-```
-logos/
-├── DAL.png   # Delta
-├── UAL.png   # United
-├── AAL.png   # American
-├── SWA.png   # Southwest
-└── ...
+```bash
+chmod +x download_logos.sh
+./download_logos.sh
 ```
 
-The default logo folder is `~/logos`; change `LOGO_DIR` in the script to point at
-the repo's `logos/` folder if you prefer (`LOGO_DIR = os.path.join(os.path.dirname(__file__), "logos")`).
-Simple, flat, single-colour logos dither best on e-paper.
+This pulls logos named by their **ICAO code** (like `DAL.png` for Delta) and places them in `~/logos`. The script only needs to be run once. 
+
+If you want to use your own custom logos, just drop transparent, square PNGs into `~/logos`. The default logo folder is `~/logos`; change `LOGO_DIR` in the script to point at the repo's `logos/` folder if you prefer (`LOGO_DIR = os.path.join(os.path.dirname(__file__), "logos")`). Simple, flat, single-colour logos dither best on e-paper.
 
 ---
 
@@ -301,10 +296,6 @@ Everything lives in `main.py` and is easy to tweak:
 
 Released under the **MIT License** — see `LICENSE`.
 
-This project is for personal, hobby, situational-awareness use. It is **not for
-navigation or any safety-critical purpose**. Please respect the terms of service
-and rate limits of every data provider listed above. The Flightradar24 lookup uses
-an **unofficial** endpoint that can change or stop working at any time and is *not*
-affiliated with or endorsed by Flightradar24; if it breaks, the tracker degrades
-gracefully and falls back to the other sources. Airline names and logos are the
-property of their respective owners and are used here only for identification.
+Look, this is a hobby project for staring at planes on a fancy e-ink screen. It is **absolutely not for navigation or safety-critical purposes**. If you use this to route real aircraft, you're on your own. 
+
+Also, respect the data providers and their rate limits. We use some unofficial endpoints (like Flightradar24) to make the data richer. If they change their APIs and it breaks, the script will gracefully fall back to other sources, but don't complain if a plane shows up without an origin airport. Airline names and logos belong to their respective owners; we're just using them to make the screen look pretty.
