@@ -67,7 +67,7 @@ set `ROTATE` to match how you hang it.)*
 | Item | Notes |
 | --- | --- |
 | **Pimoroni Inky Impression 7.3" (800×480, 7-colour)** | The layout is tuned for this exact panel (model **PIM773**). |
-| **Raspberry Pi with a 40-pin header** | Pi Zero 2 W (low power, great for a frame), or a Pi 3/4/5. The Inky plugs straight on — no soldering. |
+| **Raspberry Pi with a 40-pin header** | Raspberry Pi Zero W (highly recommended for a low-power, picture-frame build) or a Pi 3/4/5. The Inky plugs straight on — no soldering. |
 | **microSD card** (8 GB+) | For Raspberry Pi OS. |
 | **USB power supply** | Appropriate for your Pi model. |
 | **Picture frame (optional)** | The 7.3" board is 174 × 123 mm and fits an IKEA 180 × 130 mm frame. |
@@ -106,7 +106,15 @@ authoritative:
 These steps assume **Raspberry Pi OS (Bookworm or later)** and that the Inky is
 seated on the Pi's 40-pin header.
 
+**Initial Headless Setup:**
+If you are using a Raspberry Pi Zero W, it is highly recommended to run it headless. Use the official **Raspberry Pi Imager** to flash *Raspberry Pi OS Lite (32-bit)*. In the Imager's advanced settings, ensure you:
+- Enable SSH
+- Configure your Wi-Fi credentials
+- Set your local timezone
+
 ### 1. Update the Pi and enable the interfaces
+
+Once booted and logged in via SSH or terminal:
 
 ```bash
 sudo apt update && sudo apt full-upgrade -y
