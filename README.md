@@ -1,27 +1,27 @@
 # ✈️ FlyInk Board
 
-Welcome aboard! This is a live, overhead-flight dashboard built for the **Pimoroni Inky Impression 7.3"** colour e-paper display, piloted by a Raspberry Pi. 
+This is a live, overhead-flight dashboard built for the **Pimoroni Inky Impression 7.3"** colour e-paper display, piloted by a Raspberry Pi. 
 
-Every few minutes, the radar sweeps for the closest aircraft cruising above you. It figures out where it took off, where it's touching down, draws a highly accurate, type-specific aircraft silhouette, and renders a clean, glass-cockpit-style dashboard. You get a mini radar scope, local weather conditions, and a telemetry read-out for your Pi. Fasten your seatbelts!
+Every few minutes, the radar sweeps for the closest aircraft cruising above you. It figures out where it took off, where it's touching down, draws a highly accurate, type-specific aircraft silhouette, and renders a clean, glass-cockpit-style dashboard. You get a mini radar scope, local weather conditions, and a telemetry read-out for your Pi.
 
 ![FlyInk Board showing a commercial flight](images/screen_commercial.png)
 
 ---
 
-## Flight Manual (Contents)
+## Flight Manual
 
 - [Features](#features)
-- [The Gallery](#gallery)
+- [The Gallery](#the-gallery)
 - [Hardware you'll need](#hardware-youll-need)
-- [Under the Cowling (How it works)](#under-the-cowling-how-it-works)
-- [Pre-flight Setup (Installation)](#pre-flight-setup-installation)
-- [Flight Plan (Configuration)](#flight-plan-configuration)
+- [Under the Cowling](#under-the-cowling)
+- [Pre-flight Setup](#pre-flight-setup)
+- [Flight Plan](#flight-plan)
 - [Getting OpenSky API credentials](#getting-opensky-api-credentials)
-- [Airline logos (optional)](#airline-logos-optional)
-- [Cleared for Takeoff (Running it)](#cleared-for-takeoff-running-it)
-- [Autopilot on boot (systemd)](#autopilot-on-boot-systemd)
+- [Airline logos](#airline-logos)
+- [Cleared for Takeoff](#cleared-for-takeoff)
+- [Autopilot on boot](#autopilot-on-boot)
 - [Customizing your Avionics](#customizing-your-avionics)
-- [Squawking 7700 (Troubleshooting)](#squawking-7700-troubleshooting)
+- [Squawking 7700](#squawking-7700)
 - [Data sources & credits](#data-sources--credits)
 - [License & disclaimer](#license--disclaimer)
 
@@ -71,7 +71,7 @@ Every few minutes, the radar sweeps for the closest aircraft cruising above you.
 
 ---
 
-## Under the Cowling (How it works)
+## Under the Cowling
 
 This script pulls telemetry from several free/public sources, acting as your personal Air Traffic Control tower:
 
@@ -85,7 +85,7 @@ This script pulls telemetry from several free/public sources, acting as your per
 
 ---
 
-## Pre-flight Setup (Installation)
+## Pre-flight Setup
 
 These steps assume you're running **Raspberry Pi OS (Bookworm or later)** and that the Inky is properly seated on the Pi's 40-pin header.
 
@@ -142,7 +142,7 @@ pip install -r requirements.txt
 
 ---
 
-## Flight Plan (Configuration)
+## Flight Plan
 
 Open `main.py` and edit the flight parameters near the top:
 
@@ -177,7 +177,7 @@ export OPENSKY_CLIENT_SECRET="your_client_secret"
 
 (For autostart, put these in the systemd unit — see below.)
 
-## Airline logos (optional)
+## Airline logos
 
 If a logo file exists, it's proudly painted on the tail (well, the header). A helper script is included to download a massive livery library automatically:
 
@@ -192,7 +192,7 @@ If you want to use your own custom logos, just drop transparent, square PNGs int
 
 ---
 
-## Cleared for Takeoff (Running it)
+## Cleared for Takeoff
 
 ```bash
 source ~/.virtualenvs/pimoroni/bin/activate
@@ -201,7 +201,7 @@ python main.py
 
 The first refresh takes a moment (e-paper redraws take ~20–35 s), then it updates every `DISPLAY_INTERVAL` seconds. Watch the terminal for log lines telling you what's on the radar and which flight it has locked onto.
 
-## Autopilot on boot (systemd)
+## Autopilot on boot
 
 A ready-made unit file is included as `inky-flights.service`. Edit the paths, `User`, and the OpenSky credentials inside it, then install it to engage autopilot on every boot:
 
@@ -232,7 +232,7 @@ Everything lives in `main.py` and is easy to tweak:
 
 ---
 
-## Squawking 7700 (Troubleshooting)
+## Squawking 7700
 
 | Symptom | Fix |
 | --- | --- |
