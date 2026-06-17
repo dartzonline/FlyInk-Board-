@@ -95,7 +95,8 @@ def on_corridor(plat, plon, o, d):
     d_d  = haversine(plat, plon, d["lat"], d["lon"])
     if min(d_o, d_d) <= NEAR_ENDPOINT_KM:
         return True
-    return (d_o + d_d) <= (d_od * ROUTE_SLACK + ROUTE_PAD_KM)
+    corridor_limit = d_od * (ROUTE_SLACK * 1.35) + (ROUTE_PAD_KM * 1.5)
+    return (d_o + d_d) <= corridor_limit
 
 
 def _field_match(plat, plon, track, want_toward, max_km, has_airline):
@@ -373,7 +374,14 @@ def enrich(state):
             else:
                 db_origin, db_dest = o, d
         else:
-            logger.info("Off-corridor route dropped for %s", cs)
+                # Keep the route around as a low-confidence fallback unless the
+                # aircraft is very clearly nowhere near either endpoint.
+                if o and d and min(
+                        haversine(lat, lon, o["lat"], o["lon"]),
+                        haversine(lat, lon, d["lat"], d["lon"])) <= (ROUTE_PAD_KM * 2.5):
+                    db_origin, db_dest = o, d
+                else:
+                    logger.info("Off-corridor route dropped for %s", cs)
 
     has_airline = bool(info["airline"])
 
