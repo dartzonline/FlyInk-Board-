@@ -1,8 +1,8 @@
 # ✈️ FlyInk Board
 
-This is a live, overhead-flight dashboard built for the **Pimoroni Inky Impression 7.3"** colour e-paper display, piloted by a Raspberry Pi. 
+A live overhead-flight dashboard for the **Pimoroni Inky Impression 7.3"** colour e-paper display, piloted by a Raspberry Pi. Every few minutes it sweeps the radar for the closest aircraft cruising above you, figures out where it took off and where it's landing, draws a type-specific silhouette, and renders a clean glass-cockpit-style dashboard — mini radar scope, local weather, and Pi telemetry included.
 
-Every few minutes, the radar sweeps for the closest aircraft cruising above you. It figures out where it took off, where it's touching down, draws a highly accurate, type-specific aircraft silhouette, and renders a clean, glass-cockpit-style dashboard. You get a mini radar scope, local weather conditions, and a telemetry read-out for your Pi.
+Pin any specific flight number from your phone and the display switches to a live tracking screen with a real-time progress bar, scheduled times, and delay status. A companion web dashboard at `:8080` shows all nearby traffic and lets you control tracking from any device on your network.
 
 ![FlyInk Board showing a commercial flight](images/screen_commercial.png)
 
@@ -15,10 +15,12 @@ Every few minutes, the radar sweeps for the closest aircraft cruising above you.
 - [Hardware you'll need](#hardware-youll-need)
 - [Under the Cowling](#under-the-cowling)
 - [Pre-flight Setup](#pre-flight-setup)
-- [Flight Plan](#flight-plan)
-- [Getting OpenSky API credentials](#getting-opensky-api-credentials)
+- [Configuration](#configuration)
+- [Getting OpenSky credentials](#getting-opensky-credentials)
 - [Airline logos](#airline-logos)
 - [Cleared for Takeoff](#cleared-for-takeoff)
+- [Web Dashboard](#web-dashboard)
+- [Flight Tracking](#flight-tracking)
 - [Autopilot on boot](#autopilot-on-boot)
 - [Customizing your Avionics](#customizing-your-avionics)
 - [Squawking 7700](#squawking-7700)
@@ -29,75 +31,81 @@ Every few minutes, the radar sweeps for the closest aircraft cruising above you.
 
 ## Features
 
-- **Closest-aircraft dashboard** — Refreshes on its own and always locks onto the nearest aircraft, deliberately skipping the one it just showed to keep the rotation fresh.
-- **Smart route resolution** — Combines live climb/descent vectors, flight-data lookups, and OpenSky flight history to show real `ORIGIN → DEST` airports. If it doesn't know, it shows a dash rather than guessing blindly in the fog.
-- **Real airline, not the operator** — When a SkyWest/Envoy/Republic regional jet is flying for Delta/United/American, we show the *mainline brand* it's sold under, complete with a tiny "operated by …" footnote. Just like the departures board.
-- **Commercial/GA balancing** — Air traffic control won't show you two private/GA Cessnas back-to-back if a heavy commercial flight is in range. 
-- **Type-specific icons** — Distinct top-down silhouettes for jumbos, narrowbody jets, bizjets, turboprops, light GA, and helicopters—all rotated dynamically to match their live heading.
-- **Mini radar** — A proper range/bearing scope with your location at the centre and local traffic plotted as blips.
-- **Flight-phase pill** — Colour-coded telemetry: `CLIMBING / CRUISING / DESCENDING / ON GROUND`.
-- **Auto-location** — Detects your latitude/longitude from your public IP so you don't have to manually dial in your coordinates (though you can if you want pinpoint accuracy).
-- **Local weather & device footer** — Ground temperature, wind vectors, sky conditions, local time, hostname/IP, and CPU core temps.
+- **Closest-aircraft dashboard** — Refreshes automatically and locks onto the nearest aircraft, skipping the one it just showed to keep the rotation fresh.
+- **Smart route resolution** — Combines live climb/descent vectors, flight-data lookups, and OpenSky flight history to show real `ORIGIN → DEST` airports. Shows a dash rather than guessing blindly.
+- **Flight tracking mode** — Pin any flight number via the web UI or a direct URL. The Inky display switches to a dedicated tracking screen showing a live progress bar, scheduled departure/arrival times, revised times, and delay badges. Auto-clears 10 minutes after landing.
+- **AirLabs schedule data** — Real scheduled and actual departure/arrival times plus delay information, sourced from [AirLabs](https://airlabs.co) (free API key required; degrades gracefully without one).
+- **Web dashboard** — Dark-themed three-tab SPA served on port `:8080`. View all nearby traffic, see what's on screen now, and control flight tracking — all from your phone or laptop.
+- **Type-specific icons** — Distinct top-down silhouettes for jumbos, narrowbody jets, bizjets, turboprops, light GA, and helicopters — rotated dynamically to match live heading.
+- **Mini radar scope** — Proper range/bearing display with your location at the centre and live traffic plotted as blips.
+- **Local weather & device footer** — Temperature, wind direction, sky conditions, local time, hostname/IP, and CPU core temp.
+- **Airline logo support** — Airline liveries painted in the header, dithered to the e-paper palette. Run `download_logos.sh` once to pull a full library.
+
+---
 
 ## The Gallery
 
-| Regional shown as mainline | General aviation | Clear skies |
-| --- | --- | --- |
-| ![Regional operated as Delta](images/screen_regional.png) | ![Cessna GA flight](images/screen_ga.png) | ![Idle screen](images/screen_idle.png) |
+| Commercial flight | Regional flight | General aviation | Idle |
+|---|---|---|---|
+| ![Commercial](images/screen_commercial.png) | ![Regional](images/screen_regional.png) | ![GA](images/screen_ga.png) | ![Idle](images/screen_idle.png) |
 
-*(The dashboard is drawn in portrait and rotated 90° for a picture-frame mount — set `ROTATE` to match how you hang your avionics panel.)*
+*(The dashboard is drawn in portrait and rotated 90° for a picture-frame mount — set `ROTATE` to match your physical setup.)*
 
 ---
 
 ## Hardware you'll need
 
 | Item | Notes |
-| --- | --- |
-| **Pimoroni Inky Impression 7.3" (800×480, 7-colour)** | The layout is calibrated specifically for this panel (model **PIM773**). |
-| **Raspberry Pi with a 40-pin header** | Raspberry Pi Zero W (highly recommended for a sleek, low-power picture frame build) or a Pi 3/4/5. The Inky plugs straight on — no soldering required. |
-| **microSD card** (8 GB+) | For your Raspberry Pi OS image. |
-| **USB power supply** | Appropriate juice for your specific Pi model. |
-| **Picture frame (optional)** | The 7.3" board is 174 × 123 mm and fits beautifully in an IKEA 180 × 130 mm frame. |
+|---|---|
+| **Pimoroni Inky Impression 7.3" (800×480, 7-colour)** | Layout is calibrated for this panel (model **PIM773**). |
+| **Raspberry Pi with 40-pin header** | Pi Zero W is ideal for a sleek, low-power picture-frame build. Pi 3/4/5 also work. |
+| **microSD card** (8 GB+) | For Raspberry Pi OS. |
+| **USB power supply** | Appropriate for your Pi model. |
+| **Picture frame (optional)** | The 7.3" board is 174 × 123 mm — fits an IKEA 180 × 130 mm frame beautifully. |
 
 ### Where to buy the display
 
-- **Pimoroni** (manufacturer) — product guide: <https://learn.pimoroni.com/article/getting-started-with-inky-impression>
-- **The Pi Hut** — <https://thepihut.com/products/inky-impression-7-3-2025-edition>
-- **Pi Shop (US)** — <https://www.pishop.us/product/inky-impression-7-3-2025-edition/>
-- **Pi Shop (Canada)** — <https://www.pishop.ca/product/inky-impression-7-3-2025-edition/>
-- **Vilros** — <https://vilros.com/products/pimoroni-inky-impression-7-3-7-colour-epaper-e-ink-hat>
+- **Pimoroni** (manufacturer): <https://learn.pimoroni.com/article/getting-started-with-inky-impression>
+- **The Pi Hut**: <https://thepihut.com/products/inky-impression-7-3-2025-edition>
+- **Pi Shop (US)**: <https://www.pishop.us/product/inky-impression-7-3-2025-edition/>
+- **Vilros**: <https://vilros.com/products/pimoroni-inky-impression-7-3-7-colour-epaper-e-ink-hat>
 
-> The 4.0" (600×400) and 13.3" (1600×1200) Inky Impressions exist too, but the coordinates in this script assume the **7.3" / 800×480** panel. Other sizes will need their layout numbers recalibrated.
+> The 4.0" and 13.3" Inky Impressions also exist but coordinates assume the **7.3" / 800×480** panel. Other sizes need layout recalibration.
 
 ---
 
 ## Under the Cowling
 
-This script pulls telemetry from several free/public sources, acting as your personal Air Traffic Control tower:
+The app is split into clean modules under `src/`:
+
+```
+src/
+├── config.py     — All constants and env-var driven settings
+├── flights.py    — OpenSky fetch, geo math, airport data, enrichment
+├── weather.py    — Open-Meteo fetch + WMO weather codes
+├── tracking.py   — Pinned-flight state, AirLabs schedule fetch, track_context
+├── display.py    — All Inky rendering (draw_view, draw_idle, draw_tracking)
+└── web.py        — HTTP server + 3-tab dashboard + /api/state JSON endpoint
+```
+
+Data sources:
 
 | Source | Used for |
-| --- | --- |
-| [OpenSky Network](https://opensky-network.org/) | Live aircraft positions near you, and (with credentials) real departure/arrival history. |
-| Flightradar24 (unofficial endpoint) | Scheduled route, airline, registration, and aircraft type. *Best-effort; see the disclaimer.* |
-| [adsbdb](https://www.adsbdb.com/) | Aircraft registration/type fallback. |
-| [Open-Meteo](https://open-meteo.com/) | Current weather at your location (no API key needed). |
-| ipinfo.io / ipapi.co / ip-api.com | Auto-detecting your latitude/longitude from your public IP. |
+|---|---|
+| [OpenSky Network](https://opensky-network.org/) | Live aircraft positions; flight history (with credentials). |
+| [AirLabs](https://airlabs.co/) | Scheduled and actual departure/arrival times, delays (free API key). |
+| [adsbdb](https://www.adsbdb.com/) | Aircraft registration, type, and route lookup. |
+| [Open-Meteo](https://open-meteo.com/) | Current weather at your location (no key needed). |
 
 ---
 
 ## Pre-flight Setup
 
-These steps assume you're running **Raspberry Pi OS (Bookworm or later)** and that the Inky is properly seated on the Pi's 40-pin header.
+These steps assume **Raspberry Pi OS (Bookworm or later)** and the Inky seated on the 40-pin header.
 
-**Initial Headless Setup:**
-If you are using a Raspberry Pi Zero W, it is highly recommended to run it headless. Use the official **Raspberry Pi Imager** to flash *Raspberry Pi OS Lite (32-bit)*. In the Imager's advanced settings, ensure you:
-- Enable SSH
-- Configure your Wi-Fi credentials
-- Set your local timezone
+**Headless setup (recommended for Pi Zero W):** Use **Raspberry Pi Imager** to flash *Raspberry Pi OS Lite (32-bit)*. In advanced settings, enable SSH, configure Wi-Fi, and set your timezone.
 
-### 1. Power on the Avionics (Update and enable interfaces)
-
-Once booted and logged in via SSH or terminal, run your pre-flight checks:
+### 1. Update and enable interfaces
 
 ```bash
 sudo apt update && sudo apt full-upgrade -y
@@ -107,88 +115,72 @@ sudo raspi-config nonint do_i2c 0   # enable I2C
 
 ### 2. Install the Inky library
 
-Pimoroni's installer sets up everything (including a Python virtual environment at `~/.virtualenvs/pimoroni`) and configures the display drivers:
-
 ```bash
 git clone https://github.com/pimoroni/inky
 cd inky
 ./install.sh
-```
-
-Reboot when it finishes:
-
-```bash
 sudo reboot
 ```
 
-If you later see an error like *"some pins we need are in use … Chip Select … CS0"*, add this line to the bottom of `/boot/firmware/config.txt` and reboot:
+If you see *"some pins we need are in use … CS0"*, add `dtoverlay=spi0-0cs` to `/boot/firmware/config.txt` and reboot.
 
-```
-dtoverlay=spi0-0cs
-```
-
-### 3. Clone the Repo and load Dependencies
+### 3. Clone and install
 
 ```bash
 git clone git@github.com:dartzonline/FlyInk-Board-.git
-cd FlyInk-Board
-
-# Use the same virtualenv the Inky installer created:
+cd FlyInk-Board-
 source ~/.virtualenvs/pimoroni/bin/activate
 pip install -r requirements.txt
 ```
 
-> **Why a virtualenv?** Recent Pi OS blocks system-wide `pip` (PEP 668). Installing into the `pimoroni` venv keeps the airspace clear of package conflicts. If you prefer a system-wide install, you can use `pip install --break-system-packages -r requirements.txt`, but the venv is highly recommended.
+> **Why a virtualenv?** Recent Pi OS blocks system-wide `pip` (PEP 668). The `pimoroni` venv keeps the airspace clear.
 
 ---
 
-## Flight Plan
+## Configuration
 
-Open `main.py` and edit the flight parameters near the top:
-
-```python
-# Fallback location -- used only if IP geolocation goes dark.
-HOME_LAT = 30.6333
-HOME_LON = -97.6770
-USE_IP_LOCATION = True       # auto-detect lat/lon from this device's public IP
-
-DISPLAY_INTERVAL = 150       # seconds between screen refreshes (2.5 min)
-ROTATE = 90                  # 0 / 90 / 180 / 270 to match how you mount the frame
-TEMP_UNIT = "fahrenheit"     # or "celsius"
-WIND_UNIT = "mph"            # "mph" / "kmh" / "ms" / "kn"
-RADAR_RANGE_MI = 50          # outer ring distance on the mini radar
-SEARCH_RADII = [75, 185, 435]  # miles -- widen if your skies are quiet
-```
-
-**Location:** Leave `USE_IP_LOCATION = True` to auto-detect. IP geolocation is only city/ISP-accurate, so for a fixed installation it's often better to set `USE_IP_LOCATION = False` and punch your exact `HOME_LAT` / `HOME_LON` coordinates in (grab them from any map app).
-
-## Getting OpenSky API credentials
-
-The tracker flies perfectly fine on Visual Flight Rules (without credentials), but the OpenSky anonymous tier is heavily rate-limited and **flight history (real origin airport) is unavailable**. For full Instrument Flight Rules (IFR) capability, add free OAuth2 credentials:
-
-1. Create a free account at <https://opensky-network.org/>.
-2. In your account settings, create an **API client** — you'll get a **client ID** and **client secret**.
-3. Provide them to the script as environment variables:
+All settings live in `src/config.py` and can be overridden with environment variables or a `.env` file:
 
 ```bash
-export OPENSKY_CLIENT_ID="your_client_id"
-export OPENSKY_CLIENT_SECRET="your_client_secret"
+# .env (never committed)
+HOME_LAT=30.6333
+HOME_LON=-97.6770
+DISPLAY_INTERVAL=150       # seconds between e-ink refreshes
+ROTATE=90                  # 0 / 90 / 180 / 270
+TEMP_UNIT=fahrenheit       # or celsius
+WIND_UNIT=mph              # mph / kmh / ms / kn
+CONTROL_PORT=8080          # web dashboard port
+
+# API credentials
+OPENSKY_CLIENT_ID=...
+OPENSKY_CLIENT_SECRET=...
+AIRLABS_KEY=...            # free from airlabs.co
 ```
 
-(For autostart, put these in the systemd unit — see below.)
+Set your exact `HOME_LAT` / `HOME_LON` for the best radar accuracy (grab coordinates from any map app).
+
+---
+
+## Getting OpenSky credentials
+
+Without credentials the tracker still works, but the anonymous tier is rate-limited and **flight history (real origin airport)** is unavailable. For full accuracy:
+
+1. Create a free account at <https://opensky-network.org/>.
+2. In account settings, create an **API client** → get a client ID and secret.
+3. Add to your `.env` file (see above) or export as environment variables.
+
+---
 
 ## Airline logos
 
-If a logo file exists, it's proudly painted on the tail (well, the header). A helper script is included to download a massive livery library automatically:
+A helper script pulls a full livery library automatically:
 
 ```bash
 chmod +x download_logos.sh
 ./download_logos.sh
 ```
 
-This pulls logos named by their **ICAO code** (like `DAL.png` for Delta) and places them in `~/logos`. You only need to run this script once. 
-
-If you want to use your own custom logos, just drop transparent, square PNGs into `~/logos`. The default logo folder is `~/logos`; change `LOGO_DIR` in the script to point at the repo's `logos/` folder if you prefer (`LOGO_DIR = os.path.join(os.path.dirname(__file__), "logos")`). Simple, flat, single-colour logos dither best on e-paper.
+This clones [Jxck-S/airline-logos](https://github.com/Jxck-S/airline-logos) and copies logos named by ICAO code (e.g. `DAL.png`) into `~/logos`. Run once. Drop custom transparent PNGs there anytime — flat, single-colour logos dither best on e-paper.
 
 ---
 
@@ -199,66 +191,130 @@ source ~/.virtualenvs/pimoroni/bin/activate
 python main.py
 ```
 
-The first refresh takes a moment (e-paper redraws take ~20–35 s), then it updates every `DISPLAY_INTERVAL` seconds. Watch the terminal for log lines telling you what's on the radar and which flight it has locked onto.
+The first refresh takes ~20–35 s (e-paper full redraw), then updates every `DISPLAY_INTERVAL` seconds. Watch the terminal for log lines.
+
+---
+
+## Web Dashboard
+
+Once running, open a browser on any device on your network:
+
+```
+http://<pi-ip-address>:8080/
+```
+
+The dark-themed dashboard has three tabs:
+
+| Tab | What you see |
+|---|---|
+| **Nearby Flights** | Live table of all aircraft in range — callsign, airline, type, altitude, speed, distance, and colour-coded flight phase (CLIMB / CRUISE / DESC / GND). The flight currently on the Inky screen is highlighted. |
+| **Now Showing** | Card view of the flight currently displayed on the e-ink screen — full route, registration, type, altitude, speed, and bearing. |
+| **Track a Flight** | Flight number input + Track/Stop buttons. Shows live tracking status, departure → arrival airports, progress bar with aircraft emoji, scheduled and revised times, and delay badge. |
+
+The dashboard auto-refreshes every 15 seconds via the `/api/state` JSON endpoint — no page reload needed.
+
+---
+
+## Flight Tracking
+
+To pin a specific flight:
+
+1. Open the dashboard at `http://<pi-ip>:8080/`
+2. Click the **Track a Flight** tab
+3. Type any flight number — IATA (`AA1234`, `DL 456`) or ICAO (`AAL1234`) format both work
+4. Hit **Track**
+
+The Inky display immediately switches to the tracking screen showing:
+- Red `✈ FLIGHT TRACKING` banner
+- Live progress bar with aircraft icon positioned along the route
+- Scheduled and revised departure / arrival times (from AirLabs)
+- Delay badge (`+N MIN` in red, or `ON TIME` in blue)
+- Calculated ETA from live groundspeed
+- Full telemetry and radar in the lower panel
+
+The display **auto-reverts** 10 minutes after landing, or hit **Stop** to unpin immediately.
+
+> **No AirLabs key?** The display still works — it shows live position, calculates ETA from groundspeed, and infers origin/destination from heading and OpenSky history. Just no official scheduled times.
+
+---
 
 ## Autopilot on boot
 
-A ready-made unit file is included as `inky-flights.service`. Edit the paths, `User`, and the OpenSky credentials inside it, then install it to engage autopilot on every boot:
+Create a systemd service so it starts automatically:
 
 ```bash
-# adjust paths/credentials in the file first, then:
-sudo cp inky-flights.service /etc/systemd/system/inky-flights.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now inky-flights.service
-
-# check it:
-systemctl status inky-flights.service
-journalctl -u inky-flights.service -f
+sudo nano /etc/systemd/system/flyink.service
 ```
 
-The unit waits for network connectivity, restarts on failure, and passes your OpenSky credentials via `Environment=` lines.
+```ini
+[Unit]
+Description=FlyInk Board
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=pi
+WorkingDirectory=/home/pi/FlyInk-Board-
+ExecStart=/home/pi/.virtualenvs/pimoroni/bin/python main.py
+Restart=on-failure
+RestartSec=10
+Environment="OPENSKY_CLIENT_ID=your_id"
+Environment="OPENSKY_CLIENT_SECRET=your_secret"
+Environment="AIRLABS_KEY=your_key"
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now flyink.service
+journalctl -u flyink.service -f   # watch the logs
+```
 
 ---
 
 ## Customizing your Avionics
 
-Everything lives in `main.py` and is easy to tweak:
+Everything is easy to tune in `src/config.py`:
 
-- **Nearby airports** — the `AIRPORTS` dict (ICAO → IATA, name, lat, lon) drives origin/destination inference and coordinate-based recovery. Add the fields around *your* location for better local results.
-- **Mainline branding** — `MAINLINE` maps public IATA prefixes (e.g. `DL`) to the displayed airline + logo; `REGIONAL_OPERATORS` and `ICAO2IATA` help resolve those sneaky regional jets. Add carriers you see often.
-- **Airline names** — extend the `AIRLINES` dict (ICAO → friendly name).
-- **Refresh rate / range** — `DISPLAY_INTERVAL`, `RADAR_RANGE_MI`, `SEARCH_RADII`.
-- **Aircraft icons** — proportions live in the `SHAPES` dict; classification keywords live in `classify_kind()`.
+- **Your local airports** — extend the `AIRPORTS` dict (ICAO → IATA, name, lat, lon) for better origin/destination inference around your home field.
+- **Airlines** — add carriers to the `AIRLINES` and `IATA_TO_ICAO` dicts.
+- **Refresh rate / radar range** — `DISPLAY_INTERVAL`, `RADAR_RANGE_KM`, `SEARCH_RADII`.
+- **Aircraft icons** — proportions in the `_PARAMS` dict in `src/display.py`; classification keywords in `classify_kind()` in `src/flights.py`.
+- **Display rotation** — `ROTATE` (0 / 90 / 180 / 270).
 
 ---
 
 ## Squawking 7700
 
 | Symptom | Fix |
-| --- | --- |
-| *"Failed to detect an Inky board"* | SPI/I2C not enabled. Run the `raspi-config` commands above and reboot. |
+|---|---|
+| *"Failed to detect an Inky board"* | SPI/I2C not enabled. Run `raspi-config` commands and reboot. |
 | *"some pins we need are in use … CS0"* | Add `dtoverlay=spi0-0cs` to `/boot/firmware/config.txt` and reboot. |
-| `externally-managed-environment` on `pip install` | Use the `pimoroni` virtualenv, or add `--break-system-packages`. |
-| Always shows "No aircraft nearby" | Quiet skies, or no network. Widen `SEARCH_RADII`, and double check your coordinates. |
-| Route shows only "DEPARTING X" a lot | Route data was incomplete for that flight; this is expected when no destination is published. Adding OpenSky credentials dramatically improves origin accuracy. |
-| Wrong location | IP geolocation is approximate — set `USE_IP_LOCATION = False` and enter exact coordinates. |
-| Colours look muddy | Use simpler, flat logo PNGs; e-paper has a limited palette. |
-| Screen looks rotated/cut off | Set `ROTATE` (0/90/180/270) to match your physical mount. |
+| `externally-managed-environment` on `pip` | Use the `pimoroni` virtualenv or add `--break-system-packages`. |
+| Always shows "No aircraft nearby" | Quiet skies or no network. Widen `SEARCH_RADII` and check coordinates. |
+| Route shows only "DEPARTING X" | Flight's destination not published yet; expected. OpenSky credentials improve origin accuracy significantly. |
+| Tracked flight not found | Flight may not have departed yet (mode: AWAITING). It'll appear once airborne. |
+| Scheduled times show `--` | No AirLabs key set. Add `AIRLABS_KEY` to your `.env` — free from airlabs.co. |
+| Screen looks rotated / cut off | Adjust `ROTATE` (0 / 90 / 180 / 270) to match your mount. |
+| Colours look muddy | Use simpler, flat, single-colour logo PNGs; e-paper palette is limited. |
 
 ---
 
 ## Data sources & credits
 
 - Aircraft positions & history: **OpenSky Network** — <https://opensky-network.org/>
+- Schedule & delay data: **AirLabs** — <https://airlabs.co/>
+- Aircraft metadata & routes: **adsbdb** — <https://www.adsbdb.com/>
 - Weather: **Open-Meteo** — <https://open-meteo.com/>
-- Aircraft metadata: **adsbdb** — <https://www.adsbdb.com/>
-- Route/airline/type: **Flightradar24** (unofficial endpoint)
 - Display hardware & library: **Pimoroni Inky** — <https://github.com/pimoroni/inky>
+- Airline logos: **Jxck-S/airline-logos** — <https://github.com/Jxck-S/airline-logos>
+
+---
 
 ## License & disclaimer
 
 Released under the **MIT License** — see `LICENSE`.
 
-Look, this is a hobby project for staring at planes on a fancy e-ink screen. It is **absolutely not for navigation or safety-critical purposes**. If you use this to route real aircraft, you're on your own and the FAA will likely have words with you. 
-
-Also, respect the data providers and their rate limits. We use some unofficial endpoints (like Flightradar24) to make the data richer. If they change their APIs and it breaks, the script will gracefully fall back to other sources, but don't complain if a plane shows up without an origin airport. Airline names and logos belong to their respective owners; we're just using them to make the screen look pretty.
+This is a hobby project for staring at planes on a fancy e-ink screen. It is **not for navigation or safety-critical purposes**. Airline names and logos belong to their respective owners. Respect the data providers and their rate limits — we use free tiers and unofficial endpoints to enrich the data. If an API changes and a field goes dark, the script falls back gracefully rather than inventing information.
