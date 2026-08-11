@@ -115,7 +115,9 @@ All settings live in `src/config.py` and can be overridden with environment vari
 # .env (never committed)
 HOME_LAT=30.6333
 HOME_LON=-97.6770
-DISPLAY_INTERVAL=60        # seconds between e-ink refreshes
+DISPLAY_INTERVAL=120       # seconds between e-ink refreshes
+PREFER_WITHIN_KM=120       # only reach past this for a commercial flight when
+                           # nothing closer is in the sky
 ROTATE=90                  # 0 / 90 / 180 / 270
 TEMP_UNIT=fahrenheit       # or celsius
 WIND_UNIT=mph              # mph / kmh / ms / kn

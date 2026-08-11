@@ -12,7 +12,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-from src.config   import DISPLAY_INTERVAL, HOME_LAT, HOME_LON
+from src.config   import DISPLAY_INTERVAL, HOME_LAT, HOME_LON, PREFER_WITHIN_KM
 from src.flights  import get_nearby, haversine, bearing, enrich, classify_kind
 from src.weather  import fetch_weather
 from src.tracking import track_context, TRACK, TRACK_LOCK
@@ -201,22 +201,31 @@ def main():
                 def _is_commercial(i):
                     return bool(nearby_summaries[i].get("airline")) if i < len(nearby_summaries) else False
 
+                # `nearby` is already distance-sorted, so scanning it in order
+                # always lands on the *nearest* match. Two passes: local traffic
+                # first, then anywhere in range, so an airliner hundreds of km
+                # out never wins over one actually overhead.
+                def _first(want_commercial):
+                    for limit in (PREFER_WITHIN_KM, float("inf")):
+                        for i, (_s, dist) in enumerate(nearby):
+                            if dist <= limit and _is_commercial(i) == want_commercial:
+                                return i
+                    return None
+
                 ga_turn = (refresh_count % GA_INTERVAL == 0)
                 if not ga_turn and not _is_commercial(chosen_idx):
-                    for i in range(len(nearby)):
-                        if _is_commercial(i):
-                            chosen_idx = i
-                            break
+                    found = _first(True)
+                    if found is None:
+                        logger.debug("No commercial traffic in range; showing closest GA flight.")
                     else:
-                        logger.debug("No commercial traffic nearby; showing closest GA flight.")
+                        chosen_idx = found
                 elif ga_turn and _is_commercial(chosen_idx):
-                    for i in range(len(nearby)):
-                        if not _is_commercial(i):
-                            chosen_idx = i
-                            logger.info("GA turn (every %d) — showing %s.",
-                                        GA_INTERVAL, (nearby[i][0][1] or "").strip())
-                            break
-                    # No GA traffic nearby this cycle; falls through to the
+                    found = _first(False)
+                    if found is not None:
+                        chosen_idx = found
+                        logger.info("GA turn (every %d) — showing %s.",
+                                    GA_INTERVAL, (nearby[found][0][1] or "").strip())
+                    # No GA traffic in range this cycle; falls through to the
                     # closest (commercial) flight rather than showing nothing.
 
             best_state, best_dist = nearby[chosen_idx]

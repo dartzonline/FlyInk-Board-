@@ -16,10 +16,14 @@ HOME_LON = float(os.environ.get("HOME_LON", "-97.6770"))
 # ---------------------------------------------------------------------------
 # Display behaviour
 # ---------------------------------------------------------------------------
-DISPLAY_INTERVAL = int(os.environ.get("DISPLAY_INTERVAL", "60"))   # seconds
+DISPLAY_INTERVAL = int(os.environ.get("DISPLAY_INTERVAL", "120"))  # seconds
 SEARCH_RADII     = [120, 300, 700]                                  # km, expanding
 ROTATE           = int(os.environ.get("ROTATE", "90"))              # 0/90/180/270
 RADAR_RANGE_KM   = 80
+# Prefer traffic actually overhead: a commercial flight beyond this is only
+# featured when there's nothing closer, so a sparse sky doesn't put an airliner
+# 400 km away on screen ahead of the aircraft genuinely above the house.
+PREFER_WITHIN_KM = float(os.environ.get("PREFER_WITHIN_KM", "120"))
 TEMP_UNIT        = os.environ.get("TEMP_UNIT", "fahrenheit")        # or "celsius"
 WIND_UNIT        = os.environ.get("WIND_UNIT", "mph")               # mph/kmh/ms/kn
 
