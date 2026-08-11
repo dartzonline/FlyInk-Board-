@@ -115,19 +115,44 @@ All settings live in `src/config.py` and can be overridden with environment vari
 # .env (never committed)
 HOME_LAT=30.6333
 HOME_LON=-97.6770
-DISPLAY_INTERVAL=150       # seconds between e-ink refreshes
+DISPLAY_INTERVAL=60        # seconds between e-ink refreshes
 ROTATE=90                  # 0 / 90 / 180 / 270
 TEMP_UNIT=fahrenheit       # or celsius
 WIND_UNIT=mph              # mph / kmh / ms / kn
 CONTROL_PORT=8080          # web dashboard port
 
-# API credentials
+# API credentials -- all optional; positions, routes and schedules all have a
+# keyless fallback (see below), these just add accuracy on top
 OPENSKY_CLIENT_ID=...
 OPENSKY_CLIENT_SECRET=...
 AIRLABS_KEY=...            # free from airlabs.co
+AIRLABS_DAILY_BUDGET=20    # caps AirLabs calls per UTC day so a monthly quota
+                           # cannot be silently drained; 0 disables AirLabs
 ```
 
 Set your exact `HOME_LAT` / `HOME_LON` for the best radar accuracy (grab coordinates from any map app).
+
+### Positions, routes and schedules with no API key at all
+
+Every credential above is optional. When OpenSky's anonymous tier is rate-limited (it is, constantly)
+or simply has nothing for a given scan, positions fall back to three keyless community feeds --
+adsb.lol, adsb.fi, and airplanes.live -- tried in that order. They also answer "which aircraft is
+flying this callsign" directly, which is what makes a pinned flight findable without OpenSky
+credentials, and they carry registration/aircraft type inline so the board needs one less adsbdb
+call per aircraft. adsb.lol's route database additionally supplies worldwide airport coordinates,
+so a route lands with real geometry even for an airport `AIRPORTS` in `config.py` doesn't know
+(that table only covers a handful of fields near home).
+
+For a **pinned** flight's schedule (gate/terminal/delay/status), AirLabs runs first when it has
+budget left; [FlightStats](https://www.flightstats.com) fills in anything AirLabs left empty, or
+supplies everything when AirLabs is unset or its daily budget is spent. FlightStats is reached by
+reading an undocumented JSON blob the page ships for its own client-side rendering -- it can change
+without notice, which is why it is a fallback and never the primary source, and why it is only ever
+called for the one flight actually pinned, never the whole nearby board.
+
+Both the daily budget and which feed is actually answering are exposed at `/api/health` under
+`flight_sources`, so an empty screen can be told apart from "the sky is genuinely quiet right now" --
+see `draw_idle`'s two distinct messages on the Inky itself.
 
 ---
 

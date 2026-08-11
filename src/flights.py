@@ -25,8 +25,45 @@ from src.config import (
     DEP_ALT_M, DEP_RADIUS_KM, ARR_ALT_M, ARR_RADIUS_KM,
     NEAR_ENDPOINT_KM, ROUTE_SLACK, ROUTE_PAD_KM,
 )
+from src import flight_sources
 
 logger = logging.getLogger(__name__)
+
+# Which feed most recently supplied a position, so the web dashboard can say
+# the board is alive on a fallback rather than reporting OpenSky as down while
+# the screen is visibly full of aircraft.
+_active_position_source = {"name": "opensky", "at": 0.0}
+
+
+def _note_source(name):
+    _active_position_source["name"] = name
+    _active_position_source["at"] = time.time()
+
+
+def active_position_source():
+    return dict(_active_position_source)
+
+
+# Last failure per upstream, so an empty screen can be told apart from a
+# genuinely quiet sky — draw_idle otherwise looks identical whether no
+# aircraft are nearby or every position source (OpenSky *and* the keyless
+# feeds) is down at once.
+_last_upstream_error = {}
+UPSTREAM_STALE_S = 120.0
+
+
+def _note_upstream_error(source, detail):
+    _last_upstream_error[source] = {"detail": detail, "at": time.time()}
+
+
+def upstream_all_failing(now=None):
+    """True only when EVERY position source has failed recently — a single
+    feed being down is invisible as long as another one is answering."""
+    now = now or time.time()
+    sources = ("opensky", "adsb.lol", "adsb.fi", "airplanes.live")
+    recent = [s for s in sources if s in _last_upstream_error
+              and (now - _last_upstream_error[s]["at"]) < UPSTREAM_STALE_S]
+    return len(recent) >= len(sources)
 
 # ---------------------------------------------------------------------------
 # GEO UTILITIES
@@ -165,21 +202,60 @@ def _bbox(lat, lon, radius_km):
 
 
 def fetch_states(radius_km):
+    """States within radius_km of home. Falls back to the keyless community
+    feeds (adsb.lol/adsb.fi/airplanes.live) whenever OpenSky returns nothing —
+    anonymous OpenSky rate-limits constantly, and treating that as "no
+    aircraft nearby" is what leaves the display looking dark for no reason."""
     lamin, lamax, lomin, lomax = _bbox(HOME_LAT, HOME_LON, radius_km)
     headers = {}
     tok = get_opensky_token()
     if tok:
         headers["Authorization"] = f"Bearer {tok}"
+    states = []
     try:
         r = requests.get(OPENSKY_STATES_URL,
                          params={"lamin": lamin, "lamax": lamax,
                                  "lomin": lomin, "lomax": lomax},
                          headers=headers, timeout=20)
         r.raise_for_status()
-        return r.json().get("states") or []
+        states = r.json().get("states") or []
     except Exception as e:
         logger.error("OpenSky fetch error: %s", e)
-        return []
+        _note_upstream_error("opensky", str(e))
+        states = []
+
+    if not states:
+        rows, records, feed = flight_sources.feed_states_in_radius(
+            HOME_LAT, HOME_LON, radius_km, on_error=_note_upstream_error)
+        if feed:
+            _note_source(feed)
+            logger.info("OpenSky empty — using %s for this scan.", feed)
+            # The feeds return registration/type alongside the position, so
+            # priming the aircraft cache here spares one adsbdb call per
+            # aircraft on screen.
+            _prime_aircraft_cache(records)
+        states = rows
+
+    return states
+
+
+def _prime_aircraft_cache(records):
+    """Seed the adsbdb aircraft cache from registration/type a community feed
+    already returned. Only fills empty slots -- a real adsbdb answer carries
+    more (registration country) and must not be overwritten by the thinner
+    feed version."""
+    now = time.time()
+    for record in records:
+        icao24 = (record.get("hex") or "").strip().lower().lstrip("~")
+        if not icao24:
+            continue
+        info = flight_sources.aircraft_info_from_feed(record)
+        if not info:
+            continue
+        cached = _ac_cache.get(icao24)
+        if cached and cached[1][0]:
+            continue
+        _ac_cache[icao24] = (now, info)
 
 
 def get_nearby(n=10):
@@ -400,6 +476,23 @@ def enrich(state):
     if origin and dest and origin["code"] == dest["code"]:
         dest = db_dest if (db_dest and db_dest["code"] != origin["code"]) else None
 
+    # AIRPORTS only covers a handful of fields near home, so a history-derived
+    # ICAO code outside that table resolves to a code with no coordinates —
+    # this fills them in from a keyless worldwide route database rather than
+    # drawing nothing for a foreign or long-haul endpoint.
+    if (origin and origin.get("lat") is None) or (dest and dest.get("lat") is None):
+        geo = flight_sources.route_with_coordinates(cs)
+        if geo:
+            geo_o, geo_d = geo
+            if origin and origin.get("lat") is None and origin.get("code") == geo_o.get("code"):
+                origin = {**origin, "lat": geo_o["lat"], "lon": geo_o["lon"]}
+            elif origin and origin.get("lat") is None and origin.get("code") == geo_d.get("code"):
+                origin = {**origin, "lat": geo_d["lat"], "lon": geo_d["lon"]}
+            if dest and dest.get("lat") is None and dest.get("code") == geo_d.get("code"):
+                dest = {**dest, "lat": geo_d["lat"], "lon": geo_d["lon"]}
+            elif dest and dest.get("lat") is None and dest.get("code") == geo_o.get("code"):
+                dest = {**dest, "lat": geo_o["lat"], "lon": geo_o["lon"]}
+
     if origin:
         info["from_code"], info["from_city"] = origin["code"], origin["city"]
         info["from_country"] = origin.get("country")
@@ -435,3 +528,19 @@ def fmt_track(state):
     if state[10] is None:
         return "--"
     return f"{state[10]:.0f}° {compass(state[10])}"
+
+
+def flight_phase(state):
+    """(label, colour-name, arrow) from vertical rate — cheap to derive from
+    data already fetched, and it's the one thing the numeric ALT/V-SPEED
+    columns don't say in plain language."""
+    if state[8]:
+        return "ON GROUND", "BLACK", ""
+    vrate = state[11]
+    if vrate is not None:
+        fpm = vrate * 196.85
+        if fpm > 350:
+            return "CLIMBING", "GREEN", "↗"
+        if fpm < -350:
+            return "DESCENDING", "ORANGE", "↘"
+    return "CRUISING", "BLUE", "→"

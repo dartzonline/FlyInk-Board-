@@ -25,6 +25,7 @@ from src.flights import (
     enrich, classify_kind, fetch_route, _airport_obj,
     get_opensky_token,
 )
+from src import flight_sources
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,39 @@ def normalize_query(q: str) -> tuple[str, str]:
         return icao, q
 
     return q, ""
+
+
+def resolve_track_route(cs, sched):
+    """(origin, dest) airport dicts for the pinned flight, with coordinates.
+
+    adsbdb's route (fetch_route) only covers the flight's scheduled endpoints
+    and _airport_obj already gives it coordinates when known; but AIRPORTS
+    covers only a handful of fields near home, so a foreign or long-haul
+    endpoint outside that table had a code with no lat/lon and nothing to
+    draw. This fills either side in from adsb.lol's worldwide route database.
+    """
+    fr = fetch_route(cs)
+    o = _airport_obj(fr.get("origin")) if fr else None
+    dst = _airport_obj(fr.get("destination")) if fr else None
+
+    o_code = sched.get("dep_iata") or (o or {}).get("code")
+    d_code = sched.get("arr_iata") or (dst or {}).get("code")
+    need_geo = (o and o.get("lat") is None) or (dst and dst.get("lat") is None) or not (o and dst)
+    if need_geo:
+        geo = flight_sources.route_with_coordinates(cs)
+        if geo:
+            geo_o, geo_d = geo
+            if not o or o.get("lat") is None:
+                if not o_code or o_code == geo_o.get("code"):
+                    o = geo_o
+                elif o_code == geo_d.get("code"):
+                    o = geo_d
+            if not dst or dst.get("lat") is None:
+                if not d_code or d_code == geo_d.get("code"):
+                    dst = geo_d
+                elif d_code == geo_o.get("code"):
+                    dst = geo_o
+    return o, dst
 
 
 # ---------------------------------------------------------------------------
@@ -125,22 +159,35 @@ def fetch_airlabs_status(iata_flight: str) -> dict:
     Hit the AirLabs /flight endpoint for a single flight number.
     Returns a dict with: status, dep_iata, arr_iata,
     dep_sched, dep_actual, arr_sched, arr_estimated, delay_min.
+
+    Guarded by the daily budget so a monthly quota cannot be silently drained
+    again — it already had been, with nothing anywhere noticing.
     """
     if not (AIRLABS_KEY and iata_flight):
+        return {}
+    if not flight_sources.budget.allows("airlabs"):
+        logger.debug("AirLabs daily budget spent; skipping call for %s.", iata_flight)
         return {}
 
     hit = _sched_cache.get(iata_flight)
     if hit and time.time() - hit[0] < 60:   # cache for 60 s
         return hit[1]
 
+    flight_sources.budget.spend("airlabs")
     result = {}
     try:
         r = requests.get(AIRLABS_FLIGHT_URL, params={
             "api_key":   AIRLABS_KEY,
             "flight_iata": iata_flight.upper(),
         }, timeout=12)
-        if r.ok:
-            data = (r.json().get("response") or {})
+        payload = r.json() if r.ok else {}
+        # AirLabs returns HTTP 200 with an {"error": {...}} body on quota
+        # exhaustion rather than a 4xx/5xx — checking only r.ok let this pass
+        # through as a "successful" empty result instead of a visible failure.
+        if isinstance(payload, dict) and isinstance(payload.get("error"), dict):
+            logger.warning("AirLabs error: %s", payload["error"].get("message") or payload["error"])
+        elif r.ok:
+            data = payload.get("response") or {}
             dep_sched  = _hhmm(data.get("dep_time"))        # scheduled departure
             dep_actual = _hhmm(data.get("dep_actual"))      # actual departure
             arr_sched  = _hhmm(data.get("arr_time"))        # scheduled arrival
@@ -163,6 +210,7 @@ def fetch_airlabs_status(iata_flight: str) -> dict:
                 "alt":           data.get("alt"),
                 "speed":         data.get("speed"),
                 "dir":           data.get("dir"),
+                "source":        "airlabs",
             }
         else:
             logger.warning("AirLabs status non-OK: %s %s", r.status_code, r.text[:120])
@@ -173,11 +221,62 @@ def fetch_airlabs_status(iata_flight: str) -> dict:
     return result
 
 
+# key: iata number -> (fetched_at, schedule dict). A schedule changes on the
+# order of minutes, not seconds, so this cache is what keeps the metered/
+# scraped sources to a trickle even while the tracking screen polls every
+# main-loop iteration.
+_resolved_sched_cache: dict = {}
+RESOLVED_SCHED_TTL = 300.0
+RESOLVED_SCHED_EMPTY_TTL = 120.0
+
+
+def resolve_schedule(iata_flight: str) -> dict:
+    """Schedule for a pinned flight from whichever source can answer.
+
+    AirLabs runs first when it has budget left — it is the documented API.
+    FlightStats fills in only the fields AirLabs left empty (or supplies
+    everything when AirLabs is unset/out of budget), so losing either source
+    degrades the detail on screen rather than emptying it. FlightStats is a
+    scrape of an undocumented page and can break without notice, which is why
+    it is the fallback and never the only source tried.
+    """
+    if not iata_flight:
+        return {}
+    key = iata_flight.strip().upper()
+    now = time.time()
+    hit = _resolved_sched_cache.get(key)
+    if hit:
+        ttl = RESOLVED_SCHED_TTL if hit[1] else RESOLVED_SCHED_EMPTY_TTL
+        if now - hit[0] < ttl:
+            return dict(hit[1])
+
+    airlabs = fetch_airlabs_status(key)
+    result = dict(airlabs)
+
+    if flight_sources.budget.allows("flightstats") and not (
+        airlabs.get("dep_sched") and airlabs.get("arr_sched")
+    ):
+        flight_sources.budget.spend("flightstats")
+        fs = flight_sources.schedule_from_flightstats(key)
+        for field, value in fs.items():
+            if value is not None and result.get(field) is None:
+                result[field] = value
+        if fs and result.get("source") != "airlabs":
+            result["source"] = "flightstats"
+
+    _resolved_sched_cache[key] = (now, dict(result))
+    return result
+
+
 # ---------------------------------------------------------------------------
 # OpenSky — locate a single aircraft by icao24 or callsign
 # ---------------------------------------------------------------------------
 
 def fetch_one_state(icao24: str):
+    """Current state vector for one aircraft, trying OpenSky first and the
+    keyless community feeds if it comes back empty -- the same rate-limit
+    that empties the nearby board (flights.fetch_states) also strands a
+    pinned flight in "await" between polls."""
     if not icao24:
         return None
     tok = get_opensky_token()
@@ -187,14 +286,36 @@ def fetch_one_state(icao24: str):
                          headers=headers, timeout=20)
         if r.ok:
             sts = r.json().get("states") or []
-            return sts[0] if sts else None
+            if sts:
+                return sts[0]
     except Exception as e:
         logger.error("State-by-icao24 error: %s", e)
+
+    row, record, feed = flight_sources.feed_lookup("hex", icao24)
+    if row:
+        from src.flights import _note_source, _prime_aircraft_cache
+        _note_source(feed or "adsb")
+        if record:
+            _prime_aircraft_cache([record])
+        return row
     return None
 
 
 def find_icao24_by_callsign(norm: str) -> str | None:
-    """Global OpenSky search — only called once when tracking starts."""
+    """Resolve a pinned callsign to its icao24 hex.
+
+    Tried against the keyless community feeds first — they answer "which
+    aircraft is flying this callsign" directly. The OpenSky fallback below
+    has no such endpoint; the only way is downloading every state vector on
+    earth and scanning it, which is far more expensive and only reachable at
+    all with OpenSky credentials configured.
+    """
+    row, _, feed = flight_sources.feed_lookup("callsign", norm)
+    if row and row[0]:
+        from src.flights import _note_source
+        _note_source(feed or "adsb")
+        return row[0]
+
     tok = get_opensky_token()
     headers = {"Authorization": f"Bearer {tok}"} if tok else {}
     try:
@@ -289,15 +410,22 @@ def track_context() -> dict | None:
                 if TRACK["norm"] == norm:
                     TRACK["iata"] = iata
 
-    # --- AirLabs status (uses IATA number if we have one) --------------------
-    sched = fetch_airlabs_status(iata) if iata else {}
+    # --- Schedule: AirLabs first, FlightStats filling any gap ----------------
+    sched = resolve_schedule(iata) if iata else {}
+    # A true codeshare flies under the operating airline's own callsign, so
+    # nothing in the sky broadcasts the number that was pinned. FlightStats
+    # knows the real callsign, which is what makes those flights findable
+    # instead of stuck on "await" forever.
+    schedule_callsign = sched.pop("_callsign", None)
 
-    # Try to resolve icao24 from AirLabs position data or by callsign scan
+    # Try to resolve icao24 from AirLabs position data or by callsign lookup
     if not icao:
         if sched.get("aircraft_icao"):
             icao = sched["aircraft_icao"].lower()
         else:
             icao = find_icao24_by_callsign(norm)
+            if not icao and schedule_callsign and schedule_callsign != norm:
+                icao = find_icao24_by_callsign(schedule_callsign)
 
     # --- Live OpenSky position -----------------------------------------------
     state = fetch_one_state(icao) if icao else None

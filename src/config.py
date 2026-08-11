@@ -16,7 +16,7 @@ HOME_LON = float(os.environ.get("HOME_LON", "-97.6770"))
 # ---------------------------------------------------------------------------
 # Display behaviour
 # ---------------------------------------------------------------------------
-DISPLAY_INTERVAL = int(os.environ.get("DISPLAY_INTERVAL", "150"))  # seconds
+DISPLAY_INTERVAL = int(os.environ.get("DISPLAY_INTERVAL", "60"))   # seconds
 SEARCH_RADII     = [120, 300, 700]                                  # km, expanding
 ROTATE           = int(os.environ.get("ROTATE", "90"))              # 0/90/180/270
 RADAR_RANGE_KM   = 80

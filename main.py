@@ -92,9 +92,12 @@ def main():
     # When tracking is active we alternate: tracking screen → nearest nearby → repeat.
     # This boolean flips every cycle so the pilot still gets a local traffic update.
     show_nearby_interlude = False
-    # Track whether the previous on-screen flight was commercial (had an airline),
-    # so we can avoid showing two non-commercial flights back to back.
-    last_shown_commercial = True
+    # The board shows commercial (airline) traffic almost exclusively -- a
+    # steady stream of Cessnas doing circuits at the nearby GA field is not
+    # what this display is for. Every GA_INTERVAL-th refresh is let through
+    # anyway, so a real GA flight nearby is not invisible forever.
+    GA_INTERVAL   = 8
+    refresh_count = 0
 
     while True:
         loop_start = time.time()
@@ -130,7 +133,7 @@ def main():
                     record_nearby(nearby_summaries)
                     if nearby:
                         best_state, best_dist = nearby[0]
-                        draw_view(best_state, best_dist, weather, len(nearby))
+                        draw_view(best_state, best_dist, weather, nearby)
                         with STATE_LOCK:
                             STATE["nearby"]     = nearby_summaries
                             STATE["current"]    = nearby_summaries[0] if nearby_summaries else None
@@ -176,6 +179,8 @@ def main():
                 STATE["weather"]    = weather
                 STATE["updated_at"] = datetime.utcnow().isoformat() + "Z"
         else:
+            refresh_count += 1
+
             # A web click can queue one flight to be shown next, just once.
             queued_cs = pop_queued()
             chosen_idx = 0
@@ -189,25 +194,33 @@ def main():
                     logger.info("Queued flight %s no longer nearby; showing closest.",
                                 queued_cs)
 
-            # Variety guard: never show two non-commercial flights in a row. If
-            # the closest is non-commercial and the last screen was too, jump to
-            # the nearest commercial flight (one with an airline) instead.
+            # Commercial (airline) traffic only, almost always -- one GA/private
+            # flight is let through every GA_INTERVAL-th refresh so a real one
+            # nearby isn't permanently invisible, it just isn't the default.
             if not queued_cs:
                 def _is_commercial(i):
                     return bool(nearby_summaries[i].get("airline")) if i < len(nearby_summaries) else False
 
-                if not _is_commercial(chosen_idx) and not last_shown_commercial:
+                ga_turn = (refresh_count % GA_INTERVAL == 0)
+                if not ga_turn and not _is_commercial(chosen_idx):
                     for i in range(len(nearby)):
                         if _is_commercial(i):
                             chosen_idx = i
-                            logger.info("Variety: swapping to nearest commercial flight %s.",
-                                        (nearby[i][0][1] or "").strip())
                             break
+                    else:
+                        logger.debug("No commercial traffic nearby; showing closest GA flight.")
+                elif ga_turn and _is_commercial(chosen_idx):
+                    for i in range(len(nearby)):
+                        if not _is_commercial(i):
+                            chosen_idx = i
+                            logger.info("GA turn (every %d) — showing %s.",
+                                        GA_INTERVAL, (nearby[i][0][1] or "").strip())
+                            break
+                    # No GA traffic nearby this cycle; falls through to the
+                    # closest (commercial) flight rather than showing nothing.
 
             best_state, best_dist = nearby[chosen_idx]
-            last_shown_commercial = (bool(nearby_summaries[chosen_idx].get("airline"))
-                                     if chosen_idx < len(nearby_summaries) else False)
-            draw_view(best_state, best_dist, weather, len(nearby))
+            draw_view(best_state, best_dist, weather, nearby)
 
             current_summary = nearby_summaries[chosen_idx] if nearby_summaries else None
             with STATE_LOCK:

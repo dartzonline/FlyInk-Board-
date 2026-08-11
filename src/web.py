@@ -117,12 +117,9 @@ def _track_payload(track_q):
     frac     = 0.0
     eta_line = ""
 
-    from src.flights import (haversine, bearing, fetch_route, _airport_obj,
-                             enrich, compass)
+    from src.flights import haversine, bearing, enrich, compass
     cs  = (state[1] or "").strip() if state else (norm or "")
-    fr  = fetch_route(cs)
-    o   = _airport_obj(fr.get("origin"))      if fr else None
-    dst = _airport_obj(fr.get("destination")) if fr else None
+    o, dst = trk.resolve_track_route(cs, sched)
 
     # Surface origin/destination codes so the track tab can show the route even
     # when no AirLabs schedule is configured. AirLabs values take precedence.
@@ -1403,6 +1400,20 @@ def _health_snapshot():
       "free_gb": round(disk.free / (1024 ** 3), 2),
       "used_pct": round((disk.used / disk.total) * 100, 1) if disk.total else None,
     },
+    "flight_sources": _flight_sources_snapshot(),
+  }
+
+
+def _flight_sources_snapshot():
+  """Which feed is actually carrying the board and today's remaining
+  metered/scraped allowance -- an empty screen otherwise looks identical
+  whether the sky is quiet or every source is down."""
+  from src import flight_sources
+  from src.flights import active_position_source, upstream_all_failing
+  return {
+    "position_source": active_position_source(),
+    "all_position_sources_down": upstream_all_failing(),
+    "budgets": flight_sources.budget.snapshot(),
   }
 
 

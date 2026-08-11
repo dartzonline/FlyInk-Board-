@@ -52,8 +52,11 @@ except Exception as exc:
 
 def col(name):
     if inky is None:
-        return {"WHITE": 255, "BLACK": 0, "RED": 128,
-                "BLUE": 64, "YELLOW": 192, "GREEN": 96}.get(name, 0)
+        # Simulation-mode fallback: must be the palette INDEX for that name,
+        # not an arbitrary grayscale level. These previously didn't line up
+        # with _INK_CANDIDATES below (WHITE=255 instead of index 0, etc.),
+        # which silently inverted every simulated screenshot.
+        return _SIM_COLOR_INDEX.get(name, 1)
     return getattr(inky, name, inky.BLACK)
 
 
@@ -89,6 +92,14 @@ for _n, _rgb in INKS:
 _flat += [0, 0, 0] * (256 - len(INKS))
 _PAL.putpalette(_flat)
 _DITHER = getattr(getattr(Image, "Dither", Image), "FLOYDSTEINBERG", 3)
+
+# col()'s simulation-mode fallback needs each name's actual palette index —
+# INKS' position, not a hand-picked grayscale level — so that a "P"-mode
+# image built from col() values maps to the right colour once _flat is
+# attached as its palette (see render()). Populated here, after INKS exists;
+# col() itself is defined above but only ever called from inside other
+# functions, never at module load, so the ordering is safe.
+_SIM_COLOR_INDEX = {name: i for i, (name, _) in enumerate(INKS)}
 
 # ---------------------------------------------------------------------------
 # Font helpers
@@ -261,7 +272,7 @@ def cpu_temp():
 # Radar
 # ---------------------------------------------------------------------------
 
-def draw_radar(img, d, cx, cy, R, dist_km, brg, track, kind):
+def draw_radar(img, d, cx, cy, R, dist_km, brg, track, kind, others=()):
     d.ellipse([cx-R, cy-R, cx+R, cy+R], outline=col("BLACK"), width=2)
     rr = R / 2
     for a in range(0, 360, 12):
@@ -270,6 +281,22 @@ def draw_radar(img, d, cx, cy, R, dist_km, brg, track, kind):
         d.ellipse([x1-1, y1-1, x1+1, y1+1], fill=col("BLACK"))
     d.line([cx, cy-R-6, cx, cy-R+6], fill=col("BLACK"), width=2)
     d.text((cx, cy-R-14), "N", font=font(13), fill=col("BLACK"), anchor="mm")
+
+    # Other nearby traffic as small dots, drawn before the home marker and the
+    # featured aircraft so neither is ever hidden underneath one.
+    for s in others:
+        olat, olon = s[6], s[5]
+        if olat is None or olon is None:
+            continue
+        odist = haversine(HOME_LAT, HOME_LON, olat, olon)
+        if odist > RADAR_RANGE_KM:
+            continue
+        obrg = bearing(HOME_LAT, HOME_LON, olat, olon)
+        r = min(R, R * (odist / RADAR_RANGE_KM))
+        ox = cx + r * math.sin(math.radians(obrg))
+        oy = cy - r * math.cos(math.radians(obrg))
+        d.ellipse([ox-3, oy-3, ox+3, oy+3], fill=col("BLUE"))
+
     d.ellipse([cx-4, cy-4, cx+4, cy+4], fill=col("RED"))
     if dist_km is not None and brg is not None:
         r  = min(R, R * (dist_km / RADAR_RANGE_KM))
@@ -282,7 +309,8 @@ def draw_radar(img, d, cx, cy, R, dist_km, brg, track, kind):
 # Shared lower panel
 # ---------------------------------------------------------------------------
 
-def draw_lower(img, d, state, info, dist_km, brg, kind, weather, caption):
+def draw_lower(img, d, state, info, dist_km, brg, kind, weather, caption, others=()):
+    from src.flights import flight_phase
     from src.weather import weather_desc
     if info.get("type"):
         tf = fit_font(info["type"].upper(), int(W * 0.9), 34)
@@ -290,29 +318,39 @@ def draw_lower(img, d, state, info, dist_km, brg, kind, weather, caption):
                fill=col("BLUE"), anchor="mm")
     d.text((W/2, 360), f"{dist_km * KM_TO_MI:.0f} MI {compass(brg)} OF YOU",
            font=font(20), fill=col("RED"), anchor="mm")
-    d.line([PAD, 386, W-PAD, 386], fill=col("BLACK"), width=1)
+
+    # Phase pill: plain-language reading of the vertical rate that the
+    # numeric ALT/V-SPEED columns below don't spell out.
+    phase, pcol, parrow = flight_phase(state)
+    ptxt = f"{parrow} {phase}".strip()
+    pf = font(13)
+    pw = pf.getlength(ptxt) + 20
+    d.rounded_rectangle([W/2 - pw/2, 374, W/2 + pw/2, 396], radius=11, fill=col(pcol))
+    d.text((W/2, 385), ptxt, font=pf, fill=col("WHITE"), anchor="mm")
+
+    d.line([PAD, 410, W-PAD, 410], fill=col("BLACK"), width=1)
 
     cols = [("ALT",    fmt_alt(state)), ("GND SPD", fmt_spd(state)),
             ("V/SPEED", fmt_vs(state)), ("TRACK",   fmt_track(state))]
     colw = (W - 2*PAD) / 4
     for i, (lab, val) in enumerate(cols):
         cx = PAD + colw * (i + 0.5)
-        d.text((cx, 406), lab, font=font(14), fill=col("RED"),   anchor="mm")
-        d.text((cx, 440), val, font=fit_font(val, colw-6, 26),
+        d.text((cx, 430), lab, font=font(14), fill=col("RED"),   anchor="mm")
+        d.text((cx, 464), val, font=fit_font(val, colw-6, 26),
                fill=col("BLACK"), anchor="mm")
 
-    d.line([PAD, 468, W-PAD, 468], fill=col("BLACK"), width=1)
-    d.text((W/2, 500), "RANGE & BEARING FROM HOME",
+    d.line([PAD, 492, W-PAD, 492], fill=col("BLACK"), width=1)
+    d.text((W/2, 524), "RANGE & BEARING FROM HOME",
            font=font(14), fill=col("RED"), anchor="mm")
-    draw_radar(img, d, W/2, 600, 80, dist_km, brg, state[10], kind)
+    draw_radar(img, d, W/2, 624, 80, dist_km, brg, state[10], kind, others=others)
 
     # Aircraft identity either side of the radar, in the free margins:
     # registration country on the left, registration number on the right.
     margin_w = int((W/2 - 80) - PAD - 6)   # width of the gap beside the radar
 
     def _radar_label(cx, head, txt):
-        d.text((cx, 588), head, font=font(11), fill=col("RED"), anchor="mm")
-        d.text((cx, 610), txt.upper(),
+        d.text((cx, 612), head, font=font(11), fill=col("RED"), anchor="mm")
+        d.text((cx, 634), txt.upper(),
                font=fit_font(txt.upper(), margin_w, 14, 9),
                fill=col("BLACK"), anchor="mm")
 
@@ -329,14 +367,14 @@ def draw_lower(img, d, state, info, dist_km, brg, kind, weather, caption):
     elif brg is not None:
         _radar_label(right_cx, "BEARING", f"{brg:.0f}° {compass(brg)}")
 
-    d.text((W/2, 690), caption, font=font(12, reg=True),
+    d.text((W/2, 714), caption, font=font(12, reg=True),
            fill=col("BLACK"), anchor="mm")
-    d.line([PAD, 708, W-PAD, 708], fill=col("RED"), width=2)
+    d.line([PAD, 732, W-PAD, 732], fill=col("RED"), width=2)
 
     now = datetime.now()
-    d.text((PAD,    734), now.strftime("%a, %b %d").upper(),
+    d.text((PAD,    758), now.strftime("%a, %b %d").upper(),
            font=font(18), fill=col("BLACK"), anchor="lm")
-    d.text((W-PAD, 734), now.strftime("%I:%M %p").lstrip("0"),
+    d.text((W-PAD, 758), now.strftime("%I:%M %p").lstrip("0"),
            font=font(30), fill=col("BLACK"), anchor="rm")
 
     # Footer split into three non-overlapping zones across the width so the
@@ -353,17 +391,17 @@ def draw_lower(img, d, state, info, dist_km, brg, kind, weather, caption):
         parts.append(f"{w} {WIND_LABEL}{wdir}")
     wx = "  ·  ".join(parts)
     if wx:
-        d.text((PAD, 766), wx, font=fit_font(wx, int(third-8), 15),
+        d.text((PAD, 784), wx, font=fit_font(wx, int(third-8), 15),
                fill=col("BLACK"), anchor="lm")
     cond = weather_desc(weather.get("weathercode"))
     if cond:
-        d.text((W/2, 766), cond.upper(),
+        d.text((W/2, 784), cond.upper(),
                font=fit_font(cond.upper(), int(third-8), 13, 9),
                fill=col("RED"), anchor="mm")
     host, ip = get_net()
     netinfo = f"{host} · {ip}" if (host and ip) else (ip or host or "")
     if netinfo:
-        d.text((W-PAD, 766), netinfo,
+        d.text((W-PAD, 784), netinfo,
                font=fit_font(netinfo, int(third-8), 14, 9),
                fill=col("BLACK"), anchor="rm")
 
@@ -372,7 +410,12 @@ def draw_lower(img, d, state, info, dist_km, brg, kind, weather, caption):
 # draw_view — normal dashboard
 # ---------------------------------------------------------------------------
 
-def draw_view(state, dist_km, weather, total_nearby):
+def draw_view(state, dist_km, weather, nearby):
+    """nearby: either an int (legacy — just the count) or the full list of
+    (state, dist_km) tuples get_nearby returns, which lets the radar plot
+    every other aircraft on screen rather than just the featured one."""
+    total_nearby = nearby if isinstance(nearby, int) else len(nearby)
+    others = [] if isinstance(nearby, int) else [s for s, _ in nearby if s[0] != state[0]]
     info  = enrich(state)
     kind  = classify_kind(info["type"], bool(info["airline"]))
     track = state[10]
@@ -438,7 +481,7 @@ def draw_view(state, dist_km, weather, total_nearby):
     ct  = cpu_temp()
     if ct:
         cap += f" · CPU {ct}"
-    draw_lower(img, d, state, info, dist_km, brg, kind, weather, cap)
+    draw_lower(img, d, state, info, dist_km, brg, kind, weather, cap, others=others)
     render(img)
 
 
@@ -447,14 +490,37 @@ def draw_view(state, dist_km, weather, total_nearby):
 # ---------------------------------------------------------------------------
 
 def draw_idle(weather):
+    """No-aircraft screen.
+
+    An empty scan looks identical whether the sky is genuinely quiet or every
+    position source (OpenSky and the three keyless feeds) is down at once --
+    from src.flights import to tell those apart, so the message actually
+    names the outage instead of implying nothing is flying nearby.
+    """
+    from src.flights import upstream_all_failing
+
     img = Image.new("P", (W, H), col("WHITE") if inky is None else inky.WHITE)
     d   = ImageDraw.Draw(img)
     d.rectangle([0, 0, W, 6], fill=col("RED"))
-    paste_icon(img, "jet", 0, W/2, H*0.42, 90)
-    d.text((W/2, H*0.56), "No aircraft nearby",
-           font=font(24), fill=col("BLACK"), anchor="mm")
-    d.text((W/2, H*0.92), datetime.now().strftime("%H:%M"),
-           font=font(15), fill=col("RED"), anchor="mm")
+
+    outage = upstream_all_failing()
+    headline = "Position feeds unavailable" if outage else "No aircraft nearby"
+    subline = "Retrying automatically" if outage else None
+
+    paste_icon(img, "jet", 0, W/2, H*0.40, 90)
+    d.text((W/2, H*0.54), headline,
+           font=fit_font(headline, int(W*0.86), 24), fill=col("BLACK"), anchor="mm")
+    if subline:
+        d.text((W/2, H*0.585), subline,
+               font=font(14, reg=True), fill=col("RED"), anchor="mm")
+
+    # Bottom row, centred: clock and IP are the two things worth knowing when
+    # the screen otherwise has nothing to show.
+    _, ip = get_net()
+    clock = datetime.now().strftime("%I:%M %p").lstrip("0")
+    bottom = f"{clock}   ·   {ip}" if ip else clock
+    d.text((W/2, H*0.94), bottom,
+           font=fit_font(bottom, int(W*0.9), 16, 11), fill=col("RED"), anchor="mm")
     render(img)
 
 
@@ -529,10 +595,9 @@ def draw_tracking(ctx: dict, weather: dict):
                font=font(16), fill=col("BLACK"), anchor="rm")
 
     # Route + progress bar
+    from src.tracking import resolve_track_route
     cs    = (state[1] if state else ctx.get("norm")) or ctx.get("norm")
-    fr    = fetch_route(cs)
-    o     = _airport_obj(fr.get("origin"))      if fr else None
-    dst   = _airport_obj(fr.get("destination")) if fr else None
+    o, dst = resolve_track_route(cs, sched)
     o_code  = sched.get("dep_iata") or (o   or {}).get("code") or "?"
     d_code  = sched.get("arr_iata") or (dst or {}).get("code") or "?"
 
@@ -605,5 +670,11 @@ def render(img):
         inky.show()
     elif os.environ.get("SAVE_SIMULATION_OUTPUT") == "1":
         path = "simulation_output.png"
+        # In simulation mode col() returns small fallback ints (see top of
+        # this file), not real palette indices tied to hardware — .convert()
+        # without the matching palette attached reads them as near-black
+        # grayscale rather than the intended colours, e.g. WHITE=255 landing
+        # near-white is the one accident that happens to look right.
+        out.putpalette(_flat)
         out.convert("RGB").save(path)
         logger.info("Simulation saved to %s", path)

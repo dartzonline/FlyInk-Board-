@@ -16,3 +16,6 @@ ENV/
 
 # Logs
 *.log
+
+# Persisted daily call budget for AirLabs/FlightStats (src/flight_sources.py)
+flight_quota.json
