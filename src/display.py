@@ -410,10 +410,14 @@ def draw_lower(img, d, state, info, dist_km, brg, kind, weather, caption, others
 # draw_view — normal dashboard
 # ---------------------------------------------------------------------------
 
-def draw_view(state, dist_km, weather, nearby):
+def draw_view(state, dist_km, weather, nearby, other_count=None):
     """nearby: either an int (legacy — just the count) or the full list of
     (state, dist_km) tuples get_nearby returns, which lets the radar plot
-    every other aircraft on screen rather than just the featured one."""
+    every other aircraft on screen rather than just the featured one.
+
+    other_count: how many nearby aircraft are *not* scheduled passenger
+    airliners. They're deliberately never featured, so this is the only place
+    they're acknowledged."""
     total_nearby = nearby if isinstance(nearby, int) else len(nearby)
     others = [] if isinstance(nearby, int) else [s for s, _ in nearby if s[0] != state[0]]
     info  = enrich(state)
@@ -478,6 +482,8 @@ def draw_view(state, dist_km, weather, nearby):
                fill=col("BLACK"), anchor="mm")
 
     cap = f"{total_nearby} NEARBY · {RADAR_RANGE_KM * KM_TO_MI:.0f} MI"
+    if other_count:
+        cap += f" · {other_count} GA/PRIVATE"
     ct  = cpu_temp()
     if ct:
         cap += f" · CPU {ct}"
@@ -489,13 +495,14 @@ def draw_view(state, dist_km, weather, nearby):
 # draw_idle
 # ---------------------------------------------------------------------------
 
-def draw_idle(weather):
-    """No-aircraft screen.
+def draw_idle(weather, other_count=None):
+    """Nothing-to-feature screen, in three distinct flavours.
 
-    An empty scan looks identical whether the sky is genuinely quiet or every
-    position source (OpenSky and the three keyless feeds) is down at once --
-    from src.flights import to tell those apart, so the message actually
-    names the outage instead of implying nothing is flying nearby.
+    An empty scan used to look identical whether the sky was genuinely quiet
+    or every position source (OpenSky and the three keyless feeds) was down at
+    once, so the outage case now names itself. The third case is the common
+    one over a GA field: aircraft *are* up, just no scheduled airliner among
+    them, which is very different from an empty sky and worth saying.
     """
     from src.flights import upstream_all_failing
 
@@ -504,8 +511,15 @@ def draw_idle(weather):
     d.rectangle([0, 0, W, 6], fill=col("RED"))
 
     outage = upstream_all_failing()
-    headline = "Position feeds unavailable" if outage else "No aircraft nearby"
-    subline = "Retrying automatically" if outage else None
+    if outage:
+        headline = "Position feeds unavailable"
+        subline = "Retrying automatically"
+    elif other_count:
+        headline = "No airliners overhead"
+        subline = f"{other_count} GA/private aircraft nearby"
+    else:
+        headline = "No aircraft nearby"
+        subline = None
 
     paste_icon(img, "jet", 0, W/2, H*0.40, 90)
     d.text((W/2, H*0.54), headline,

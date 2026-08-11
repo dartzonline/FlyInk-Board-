@@ -229,41 +229,80 @@ def _route_airport(raw):
     }
 
 
-def route_with_coordinates(callsign):
+def pick_leg(stops, lat, lon):
+    """Which leg of a multi-stop rotation is this aircraft flying?
+
+    adsb.lol returns the whole day's rotation for a callsign (e.g.
+    DFW-HRL-DFW). Only one of those legs is in the air right now; the right
+    one is whichever leg the aircraft's position sits closest to, measured as
+    the detour through it versus flying it direct. Returns (origin, dest).
+    """
+    if not stops or len(stops) < 2:
+        return None
+    if lat is None or lon is None:
+        return stops[0], stops[-1]
+
+    best, best_excess = None, None
+    for a, b in zip(stops, stops[1:]):
+        leg = haversine_km(a["lat"], a["lon"], b["lat"], b["lon"])
+        via = (haversine_km(a["lat"], a["lon"], lat, lon)
+               + haversine_km(lat, lon, b["lat"], b["lon"]))
+        excess = via - leg
+        if best_excess is None or excess < best_excess:
+            best, best_excess = (a, b), excess
+    return best
+
+
+def haversine_km(lat1, lon1, lat2, lon2):
+    """Local copy so this module stays independent of flights.py (which
+    imports it -- taking the dependency the other way would be circular)."""
+    import math
+    r = 6371.0
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = (math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat1))
+         * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2)
+    return r * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def route_with_coordinates(callsign, lat=None, lon=None):
     """(origin, dest) with real coordinates for any callsign, from adsb.lol.
 
     AIRPORTS in config.py only covers a handful of fields near home, so a
     long-haul or foreign endpoint had no coordinates to draw a route with.
-    This is keyless and worldwide.
+    This is keyless and worldwide. When the callsign's rotation has more than
+    two stops, `lat`/`lon` select the leg actually being flown.
     """
     if not callsign:
         return None
     key = callsign.strip().upper()
     now = time.time()
     hit = _route_cache.get(key)
-    if hit:
-        ttl = ROUTE_TTL if hit[1] else ROUTE_MISS_TTL
-        if now - hit[0] < ttl:
-            return hit[1]
+    if hit and (now - hit[0]) < (ROUTE_TTL if hit[1] else ROUTE_MISS_TTL):
+        return pick_leg(hit[1], lat, lon)
 
     url = ADSB_LOL_ROUTE_URL.format(callsign=key)
     throttle(url)
-    result = None
+    stops = None
     try:
         r = requests.get(url, timeout=12, allow_redirects=True,
                          headers={"Accept": "application/json", "User-Agent": "flyink-board"})
         if r.status_code == 200:
             payload = r.json()
             airports = payload.get("_airports") if isinstance(payload, dict) else None
-            # Only a simple two-airport routing is usable; a multi-leg answer
-            # cannot be reduced to one origin/destination pair.
-            if isinstance(airports, list) and len(airports) == 2 and all(isinstance(a, dict) for a in airports):
-                result = (_route_airport(airports[0]), _route_airport(airports[1]))
+            if isinstance(airports, list) and all(isinstance(a, dict) for a in airports):
+                placed = [_route_airport(a) for a in airports]
+                placed = [s for s in placed if s.get("lat") is not None]
+                if len(placed) >= 2:
+                    # Cached as the full rotation (which can be DFW-HRL-DFW);
+                    # pick_leg narrows it to the leg being flown, so the same
+                    # cache entry stays correct as the aircraft moves.
+                    stops = placed
     except Exception as e:
         logger.debug("route lookup failed for %s: %s", key, e)
 
-    _route_cache[key] = (now, result)
-    return result
+    _route_cache[key] = (now, stops)
+    return pick_leg(stops, lat, lon)
 
 
 # ---------------------------------------------------------------------------

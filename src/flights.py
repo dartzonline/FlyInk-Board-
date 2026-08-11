@@ -21,7 +21,7 @@ from src.config import (
     OPENSKY_CLIENT_ID, OPENSKY_CLIENT_SECRET,
     OPENSKY_STATES_URL, OPENSKY_FLIGHTS_URL, OPENSKY_TOKEN_URL,
     ADSBDB_CALLSIGN, ADSBDB_AIRCRAFT,
-    AIRPORTS, SMALL_FIELDS, AIRLINES,
+    AIRPORTS, SMALL_FIELDS, AIRLINES, PASSENGER_EXCLUDED_CODES,
     DEP_ALT_M, DEP_RADIUS_KM, ARR_ALT_M, ARR_RADIUS_KM,
     NEAR_ENDPOINT_KM, ROUTE_SLACK, ROUTE_PAD_KM,
 )
@@ -321,11 +321,41 @@ _ac_cache: dict    = {}
 
 
 def airline_of(callsign):
+    """(display_name, icao_code) from a callsign's 3-letter prefix.
+
+    `display_name` is None unless the prefix is a *known* airline. It used to
+    fall back to the raw code, which meant any AAA1234-shaped callsign looked
+    like an airline -- survey, medical, cargo and fractional-ownership
+    operators (ASI, FFL, VJA...) all read as commercial passenger traffic and
+    crowded real airliners off the board. The code is still returned so a
+    logo lookup can be attempted either way.
+    """
     cs = (callsign or "").strip()
     if len(cs) >= 4 and cs[:3].isalpha() and cs[3].isdigit():
         code = cs[:3].upper()
-        return AIRLINES.get(code, code), code
+        return AIRLINES.get(code), code
     return None, None
+
+
+def is_passenger_airline(info):
+    """Is this enriched flight scheduled passenger airline traffic?
+
+    Two independent ways to qualify, because neither alone is enough: the
+    local AIRLINES table is small, and adsbdb has no airline record for a
+    large share of non-airline callsigns. A flight counts if its code is a
+    known passenger airline, OR adsbdb resolved a real airline name for it.
+    Cargo and fractional-ownership operators are excluded even though they
+    are genuine airlines -- this is the "show me airliners" test, and a
+    FedEx freighter or a NetJets Citation isn't what that means.
+    """
+    code = (info.get("airline_code") or "").upper()
+    if code in PASSENGER_EXCLUDED_CODES:
+        return False
+    if code in AIRLINES:
+        return True
+    # adsbdb supplied a real airline name (enrich() overwrites info["airline"]
+    # from its route record), which the local table may simply not carry.
+    return bool(info.get("airline"))
 
 
 def _airport_obj(o):
@@ -405,9 +435,17 @@ def classify_kind(type_str, has_airline):
                         "dash 8", "dhc-8", "q400", "pc-12", "tbm", "pilatus",
                         "saab 340", "beech 1900", "metroliner", "do228",
                         "twin otter", "dhc-6"]),
+        # adsbdb often gives a bare model number with no manufacturer at all
+        # ("182L", "172S", "PA-28-161"), which matched none of the "cessna 1"
+        # style needles and fell through to the "jet" default -- a Skyhawk
+        # drawn as an airliner. The bare-number prefixes below catch those.
         ("light",     ["cessna 1", "cessna 2", "piper", "cirrus", "sr20", "sr22",
                         "diamond", "da40", "da42", "pa-", "c172", "c152", "c182",
-                        "bonanza", "mooney", "grumman", "tecnam"]),
+                        "bonanza", "mooney", "grumman", "tecnam",
+                        "150", "152", "162", "172", "177", "180", "182", "185",
+                        "206", "210", "arrow", "archer", "warrior", "cherokee",
+                        "skyhawk", "skylane", "rv-", "glasair", "lancair",
+                        "champion", "citabria", "decathlon", "husky", "maule"]),
     ]
     for kind, keys in groups:
         if any(k in t for k in keys):
@@ -468,30 +506,52 @@ def enrich(state):
     h_origin = resolve_airport(h_dep) if h_dep else None
     h_dest   = resolve_airport(h_arr) if h_arr else None
 
-    # Resolve by priority: live motion > history > corridor-checked schedule DB
-    origin = dep or h_origin or db_origin
-    dest   = arr or h_dest or db_dest
+    # Candidate D: adsb.lol's rotation, narrowed to the leg this aircraft's
+    # position actually sits on, then corridor-checked like any other schedule
+    # guess. This is what resolves the common case where adsbdb holds a stale
+    # single leg for a callsign that really flies a multi-stop rotation --
+    # ENY3576 reads as ORD-FAR there but is actually on DFW-HRL today.
+    geo_origin = geo_dest = None
+    geo = flight_sources.route_with_coordinates(cs, lat, lon)
+    if geo:
+        g_o, g_d = geo
+        if on_corridor(lat, lon, g_o, g_d):
+            if (track is not None and lat is not None and lon is not None):
+                ao = angle_off(track, bearing(lat, lon, g_o["lat"], g_o["lon"]))
+                ad = angle_off(track, bearing(lat, lon, g_d["lat"], g_d["lon"]))
+                geo_origin, geo_dest = (g_d, g_o) if ao < ad else (g_o, g_d)
+            else:
+                geo_origin, geo_dest = g_o, g_d
+
+    # Resolve by priority: live motion > history > position-verified rotation
+    # > corridor-checked schedule DB
+    origin = dep or h_origin or geo_origin or db_origin
+    dest   = arr or h_dest or geo_dest or db_dest
 
     # Guard: never show origin == destination
     if origin and dest and origin["code"] == dest["code"]:
-        dest = db_dest if (db_dest and db_dest["code"] != origin["code"]) else None
+        for alt in (geo_dest, db_dest):
+            if alt and alt["code"] != origin["code"]:
+                dest = alt
+                break
+        else:
+            dest = None
 
     # AIRPORTS only covers a handful of fields near home, so a history-derived
     # ICAO code outside that table resolves to a code with no coordinates —
-    # this fills them in from a keyless worldwide route database rather than
-    # drawing nothing for a foreign or long-haul endpoint.
-    if (origin and origin.get("lat") is None) or (dest and dest.get("lat") is None):
-        geo = flight_sources.route_with_coordinates(cs)
-        if geo:
-            geo_o, geo_d = geo
-            if origin and origin.get("lat") is None and origin.get("code") == geo_o.get("code"):
-                origin = {**origin, "lat": geo_o["lat"], "lon": geo_o["lon"]}
-            elif origin and origin.get("lat") is None and origin.get("code") == geo_d.get("code"):
-                origin = {**origin, "lat": geo_d["lat"], "lon": geo_d["lon"]}
-            if dest and dest.get("lat") is None and dest.get("code") == geo_d.get("code"):
-                dest = {**dest, "lat": geo_d["lat"], "lon": geo_d["lon"]}
-            elif dest and dest.get("lat") is None and dest.get("code") == geo_o.get("code"):
-                dest = {**dest, "lat": geo_o["lat"], "lon": geo_o["lon"]}
+    # borrow them from the rotation lookup rather than drawing nothing.
+    for side in ("origin", "dest"):
+        ap = origin if side == "origin" else dest
+        if not (ap and ap.get("lat") is None):
+            continue
+        for cand in (geo_origin, geo_dest):
+            if cand and cand.get("code") == ap.get("code"):
+                merged = {**ap, "lat": cand["lat"], "lon": cand["lon"]}
+                if side == "origin":
+                    origin = merged
+                else:
+                    dest = merged
+                break
 
     if origin:
         info["from_code"], info["from_city"] = origin["code"], origin["city"]

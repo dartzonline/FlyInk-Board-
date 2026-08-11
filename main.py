@@ -13,7 +13,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 from src.config   import DISPLAY_INTERVAL, HOME_LAT, HOME_LON, PREFER_WITHIN_KM
-from src.flights  import get_nearby, haversine, bearing, enrich, classify_kind
+from src.flights  import (get_nearby, haversine, bearing, enrich, classify_kind,
+                          is_passenger_airline)
 from src.weather  import fetch_weather
 from src.tracking import track_context, TRACK, TRACK_LOCK
 from src.display  import draw_view, draw_idle, draw_tracking
@@ -92,12 +93,6 @@ def main():
     # When tracking is active we alternate: tracking screen → nearest nearby → repeat.
     # This boolean flips every cycle so the pilot still gets a local traffic update.
     show_nearby_interlude = False
-    # The board shows commercial (airline) traffic almost exclusively -- a
-    # steady stream of Cessnas doing circuits at the nearby GA field is not
-    # what this display is for. Every GA_INTERVAL-th refresh is let through
-    # anyway, so a real GA flight nearby is not invisible forever.
-    GA_INTERVAL   = 8
-    refresh_count = 0
 
     while True:
         loop_start = time.time()
@@ -131,16 +126,21 @@ def main():
                         except Exception as e:
                             logger.debug("summary error: %s", e)
                     record_nearby(nearby_summaries)
-                    if nearby:
-                        best_state, best_dist = nearby[0]
-                        draw_view(best_state, best_dist, weather, nearby)
+                    # Same passenger-only rule as the main rotation below.
+                    flags = [is_passenger_airline(s) for s in nearby_summaries]
+                    others = sum(1 for f in flags if not f)
+                    pick = next((i for i, f in enumerate(flags) if f), None)
+                    if pick is not None:
+                        best_state, best_dist = nearby[pick]
+                        draw_view(best_state, best_dist, weather, nearby,
+                                  other_count=others)
                         with STATE_LOCK:
                             STATE["nearby"]     = nearby_summaries
-                            STATE["current"]    = nearby_summaries[0] if nearby_summaries else None
+                            STATE["current"]    = nearby_summaries[pick]
                             STATE["weather"]    = weather
                             STATE["updated_at"] = datetime.utcnow().isoformat() + "Z"
                     else:
-                        draw_idle(weather)
+                        draw_idle(weather, other_count=others)
                 else:
                     # Normal tracking screen
                     draw_tracking(ctx, weather)
@@ -179,8 +179,6 @@ def main():
                 STATE["weather"]    = weather
                 STATE["updated_at"] = datetime.utcnow().isoformat() + "Z"
         else:
-            refresh_count += 1
-
             # A web click can queue one flight to be shown next, just once.
             queued_cs = pop_queued()
             chosen_idx = 0
@@ -194,42 +192,48 @@ def main():
                     logger.info("Queued flight %s no longer nearby; showing closest.",
                                 queued_cs)
 
-            # Commercial (airline) traffic only, almost always -- one GA/private
-            # flight is let through every GA_INTERVAL-th refresh so a real one
-            # nearby isn't permanently invisible, it just isn't the default.
+            # Scheduled passenger airliners only. Everything else nearby --
+            # flight school Cessnas, survey and medical operators, cargo,
+            # fractional bizjets -- is counted for the footer rather than
+            # featured, since a logo/route/type screen is only meaningful for
+            # an airliner in the first place.
+            passenger_flags = [is_passenger_airline(s) for s in nearby_summaries]
+
+            def _is_pax(i):
+                return passenger_flags[i] if i < len(passenger_flags) else False
+
+            other_count = sum(1 for f in passenger_flags if not f)
+
             if not queued_cs:
-                def _is_commercial(i):
-                    return bool(nearby_summaries[i].get("airline")) if i < len(nearby_summaries) else False
-
                 # `nearby` is already distance-sorted, so scanning it in order
-                # always lands on the *nearest* match. Two passes: local traffic
-                # first, then anywhere in range, so an airliner hundreds of km
-                # out never wins over one actually overhead.
-                def _first(want_commercial):
-                    for limit in (PREFER_WITHIN_KM, float("inf")):
-                        for i, (_s, dist) in enumerate(nearby):
-                            if dist <= limit and _is_commercial(i) == want_commercial:
-                                return i
-                    return None
+                # always lands on the *nearest* match. Local traffic first, so
+                # an airliner hundreds of km out never wins over one overhead.
+                chosen_idx = None
+                for limit in (PREFER_WITHIN_KM, float("inf")):
+                    for i, (_s, dist) in enumerate(nearby):
+                        if dist <= limit and _is_pax(i):
+                            chosen_idx = i
+                            break
+                    if chosen_idx is not None:
+                        break
 
-                ga_turn = (refresh_count % GA_INTERVAL == 0)
-                if not ga_turn and not _is_commercial(chosen_idx):
-                    found = _first(True)
-                    if found is None:
-                        logger.debug("No commercial traffic in range; showing closest GA flight.")
-                    else:
-                        chosen_idx = found
-                elif ga_turn and _is_commercial(chosen_idx):
-                    found = _first(False)
-                    if found is not None:
-                        chosen_idx = found
-                        logger.info("GA turn (every %d) — showing %s.",
-                                    GA_INTERVAL, (nearby[found][0][1] or "").strip())
-                    # No GA traffic in range this cycle; falls through to the
-                    # closest (commercial) flight rather than showing nothing.
+                if chosen_idx is None:
+                    # Nothing but light/cargo/survey traffic up right now. The
+                    # idle screen says so honestly instead of featuring one.
+                    logger.info("No passenger airliner in range (%d other aircraft nearby).",
+                                other_count)
+                    draw_idle(weather, other_count=other_count)
+                    with STATE_LOCK:
+                        STATE["nearby"]     = nearby_summaries
+                        STATE["current"]    = None
+                        STATE["weather"]    = weather
+                        STATE["updated_at"] = datetime.utcnow().isoformat() + "Z"
+                    elapsed = time.time() - loop_start
+                    _responsive_sleep(max(0, DISPLAY_INTERVAL - elapsed))
+                    continue
 
             best_state, best_dist = nearby[chosen_idx]
-            draw_view(best_state, best_dist, weather, nearby)
+            draw_view(best_state, best_dist, weather, nearby, other_count=other_count)
 
             current_summary = nearby_summaries[chosen_idx] if nearby_summaries else None
             with STATE_LOCK:

@@ -16,7 +16,7 @@ HOME_LON = float(os.environ.get("HOME_LON", "-97.6770"))
 # ---------------------------------------------------------------------------
 # Display behaviour
 # ---------------------------------------------------------------------------
-DISPLAY_INTERVAL = int(os.environ.get("DISPLAY_INTERVAL", "120"))  # seconds
+DISPLAY_INTERVAL = int(os.environ.get("DISPLAY_INTERVAL", "210"))  # seconds (3.5 min)
 SEARCH_RADII     = [120, 300, 700]                                  # km, expanding
 ROTATE           = int(os.environ.get("ROTATE", "90"))              # 0/90/180/270
 RADAR_RANGE_KM   = 80
@@ -66,15 +66,64 @@ FONT_REG  = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 # Airline / airport data
 # ---------------------------------------------------------------------------
 AIRLINES = {
+    # US mainline + major regionals
     "AAL": "American Airlines",  "UAL": "United Airlines",
     "DAL": "Delta Air Lines",    "SWA": "Southwest Airlines",
     "JBU": "JetBlue",            "ASA": "Alaska Airlines",
     "FFT": "Frontier",           "NKS": "Spirit Airlines",
     "SKW": "SkyWest",            "ENY": "Envoy Air",
     "RPA": "Republic Airways",   "EDV": "Endeavor Air",
-    "AAY": "Allegiant Air",      "FDX": "FedEx",
-    "UPS": "UPS Airlines",       "EJA": "NetJets",
-    "LXJ": "Flexjet",
+    "AAY": "Allegiant Air",      "HAL": "Hawaiian Airlines",
+    "ASH": "Mesa Airlines",      "JIA": "PSA Airlines",
+    "PDT": "Piedmont Airlines",  "AWI": "Air Wisconsin",
+    "GJS": "GoJet Airlines",     "QXE": "Horizon Air",
+    "UCA": "CommutAir",          "SCX": "Sun Country",
+    "MXY": "Breeze Airways",
+    # International passenger carriers commonly overhead
+    "ACA": "Air Canada",         "WJA": "WestJet",
+    "BAW": "British Airways",    "DLH": "Lufthansa",
+    "AFR": "Air France",         "KLM": "KLM",
+    "UAE": "Emirates",           "QTR": "Qatar Airways",
+    "SIA": "Singapore Airlines", "ANA": "ANA",
+    "JAL": "Japan Airlines",     "RYR": "Ryanair",
+    "EZY": "easyJet",            "VIR": "Virgin Atlantic",
+    "ICE": "Icelandair",         "AMX": "Aeromexico",
+    "VOI": "Volaris",            "CPA": "Cathay Pacific",
+    "KAL": "Korean Air",         "QFA": "Qantas",
+    "ETD": "Etihad",             "THY": "Turkish Airlines",
+    "IBE": "Iberia",             "AVA": "Avianca",
+    "CMP": "Copa Airlines",      "TAI": "TACA",
+    "LAN": "LATAM",              "TAM": "LATAM Brasil",
+    "AZU": "Azul",               "GLO": "GOL",
+    "AMC": "Air Malta",          "SWR": "SWISS",
+    "AUA": "Austrian Airlines",  "SAS": "SAS",
+    "FIN": "Finnair",            "TAP": "TAP Air Portugal",
+    "ELY": "El Al",              "SVA": "Saudia",
+    "MSR": "EgyptAir",           "ETH": "Ethiopian Airlines",
+    "AIC": "Air India",          "CCA": "Air China",
+    "CES": "China Eastern",      "CSN": "China Southern",
+    "HDA": "Hong Kong Airlines", "EVA": "EVA Air",
+    "CAL": "China Airlines",     "THA": "Thai Airways",
+    "MAS": "Malaysia Airlines",  "GIA": "Garuda Indonesia",
+    "PAL": "Philippine Airlines","VNA": "Vietnam Airlines",
+    "AAR": "Asiana Airlines",    "NZA": "Air New Zealand",
+    "ANZ": "Air New Zealand",    "VOZ": "Virgin Australia",
+    "WZZ": "Wizz Air",           "VLG": "Vueling",
+    "NOZ": "Norwegian",          "NAX": "Norwegian",
+    # Cargo / fractional-ownership. Named so they still render correctly if
+    # pinned or queued, but PASSENGER_EXCLUDED_CODES below keeps them out of
+    # the auto-featured rotation, which is meant for airline passenger traffic.
+    "FDX": "FedEx",              "UPS": "UPS Airlines",
+    "EJA": "NetJets",            "LXJ": "Flexjet",
+    "GTI": "Atlas Air",          "ABX": "ABX Air",
+    "CKS": "Kalitta Air",        "PAC": "Polar Air Cargo",
+    "ATN": "Air Transport Intl", "SWQ": "Swift Air",
+}
+
+# Carriers that are real airlines but not scheduled passenger service, so the
+# board doesn't feature them when it's asked for commercial passenger traffic.
+PASSENGER_EXCLUDED_CODES = {
+    "FDX", "UPS", "EJA", "LXJ", "GTI", "ABX", "CKS", "PAC", "ATN", "SWQ",
 }
 
 # IATA -> ICAO prefix map so typed "DL 123" -> "DAL123"

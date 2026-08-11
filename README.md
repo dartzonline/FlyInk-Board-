@@ -31,7 +31,7 @@ Pin any specific flight number from your phone and the display switches to a liv
 
 ## Features
 
-- **Closest-aircraft dashboard** — Refreshes automatically and locks onto the nearest aircraft, skipping the one it just showed to keep the rotation fresh.
+- **Airliners only** — Features the nearest scheduled passenger flight, preferring traffic actually overhead (`PREFER_WITHIN_KM`). Flight-school Cessnas, survey/medical operators, cargo and fractional bizjets are counted in the footer rather than shown, since a logo/route/type screen only means anything for an airliner. When nothing airline-operated is up, the screen says so and reports how many other aircraft are nearby.
 - **Smart route resolution** — Combines live climb/descent vectors, OpenSky flight history, and adsbdb's route database (sanity-checked against the aircraft's position so it never shows an off-corridor route) to display real `ORIGIN → DEST` airports. Shows a dash rather than guessing blindly. Priority: live motion → flight history → corridor-checked schedule.
 - **Flight tracking mode** — Pin any flight number via the web UI or a direct URL. The Inky display switches to a dedicated tracking screen showing a live progress bar, scheduled departure/arrival times, revised times, and delay badges. Auto-clears 10 minutes after landing.
 - **AirLabs schedule data** — Real scheduled and actual departure/arrival times plus delay information, sourced from [AirLabs](https://airlabs.co) (free API key required; degrades gracefully without one).
@@ -115,7 +115,7 @@ All settings live in `src/config.py` and can be overridden with environment vari
 # .env (never committed)
 HOME_LAT=30.6333
 HOME_LON=-97.6770
-DISPLAY_INTERVAL=120       # seconds between e-ink refreshes
+DISPLAY_INTERVAL=210       # seconds between e-ink refreshes (3.5 min)
 PREFER_WITHIN_KM=120       # only reach past this for a commercial flight when
                            # nothing closer is in the sky
 ROTATE=90                  # 0 / 90 / 180 / 270
