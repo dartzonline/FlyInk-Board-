@@ -269,6 +269,30 @@ def cpu_temp():
 
 
 # ---------------------------------------------------------------------------
+# Change-suppression — an e-ink panel shouldn't flash for a screen that would
+# look identical (e.g. the idle "no aircraft" screen redrawn every loop with
+# nothing new but the clock). Screens that want this opt in by routing their
+# final render() call through here with a signature of their meaningful
+# content; a repeat signature is skipped. A periodic force-refresh still goes
+# through regardless, since e-ink benefits from an occasional full redraw.
+# ---------------------------------------------------------------------------
+_last_screen_sig: object = None
+_last_screen_ts  = 0.0
+FORCE_REFRESH_S  = 1800  # redraw at least this often even if nothing changed
+
+
+def render_if_changed(img, signature):
+    global _last_screen_sig, _last_screen_ts
+    now_ts = time.time()
+    if signature == _last_screen_sig and (now_ts - _last_screen_ts) < FORCE_REFRESH_S:
+        logger.debug("Screen content unchanged — skipping e-ink refresh.")
+        return
+    _last_screen_sig = signature
+    _last_screen_ts  = now_ts
+    render(img)
+
+
+# ---------------------------------------------------------------------------
 # Radar
 # ---------------------------------------------------------------------------
 
@@ -535,7 +559,34 @@ def draw_idle(weather, other_count=None):
     bottom = f"{clock}   ·   {ip}" if ip else clock
     d.text((W/2, H*0.94), bottom,
            font=fit_font(bottom, int(W*0.9), 16, 11), fill=col("RED"), anchor="mm")
-    render(img)
+    # Same idle screen shown over and over (nothing nearby) shouldn't cause a
+    # flash every loop — only the clock/subtext would differ, which isn't
+    # worth an e-ink refresh. A periodic force-refresh still happens.
+    render_if_changed(img, ("idle", outage, headline, subline))
+
+
+# ---------------------------------------------------------------------------
+# draw_night — overnight sleep screen
+# ---------------------------------------------------------------------------
+
+def draw_night():
+    """Shown once at the start of the night window and left untouched until
+    morning: just enough to confirm the board is alive (IP address) without
+    refreshing the panel again before NIGHT_END."""
+    img = Image.new("P", (W, H), col("WHITE") if inky is None else inky.WHITE)
+    d   = ImageDraw.Draw(img)
+
+    d.text((W/2, H*0.44), "Night night", font=fit_font("Night night", int(W*0.75), 56),
+           fill=col("BLACK"), anchor="mm")
+    d.text((W/2, H*0.51), "Board wakes at 6:00 AM",
+           font=font(15, reg=True), fill=col("RED"), anchor="mm")
+
+    _, ip = get_net()
+    bottom = ip or "—"
+    d.text((W/2, H*0.94), bottom,
+           font=fit_font(bottom, int(W*0.9), 16, 11), fill=col("BLACK"), anchor="mm")
+
+    render_if_changed(img, ("night",))
 
 
 # ---------------------------------------------------------------------------

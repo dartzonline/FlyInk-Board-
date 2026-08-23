@@ -34,6 +34,13 @@ CONTROL_PORT   = int(os.environ.get("CONTROL_PORT", "8080"))
 TRACK_LINGER_S = 600   # keep a landed flight on screen for 10 min then auto-stop
 
 # ---------------------------------------------------------------------------
+# Night mode — e-ink sleeps overnight when nobody is likely watching
+# ---------------------------------------------------------------------------
+NIGHT_MODE_ENABLED = os.environ.get("NIGHT_MODE_ENABLED", "1") == "1"
+NIGHT_START = os.environ.get("NIGHT_START", "23:45")  # HH:MM, local time
+NIGHT_END   = os.environ.get("NIGHT_END",   "06:00")  # HH:MM, local time
+
+# ---------------------------------------------------------------------------
 # API credentials
 # ---------------------------------------------------------------------------
 OPENSKY_CLIENT_ID     = os.environ.get("OPENSKY_CLIENT_ID", "")

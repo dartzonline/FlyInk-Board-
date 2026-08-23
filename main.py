@@ -3,7 +3,7 @@
 import time
 import logging
 import sys
-from datetime import datetime
+from datetime import datetime, time as dtime
 
 logging.basicConfig(
     level=logging.INFO,
@@ -12,14 +12,36 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-from src.config   import DISPLAY_INTERVAL, HOME_LAT, HOME_LON, PREFER_WITHIN_KM
+from src.config   import (DISPLAY_INTERVAL, HOME_LAT, HOME_LON, PREFER_WITHIN_KM,
+                          NIGHT_MODE_ENABLED, NIGHT_START, NIGHT_END)
 from src.flights  import (get_nearby, haversine, bearing, enrich, classify_kind,
                           is_passenger_airline)
 from src.weather  import fetch_weather
 from src.tracking import track_context, TRACK, TRACK_LOCK
-from src.display  import draw_view, draw_idle, draw_tracking
+from src.display  import draw_view, draw_idle, draw_tracking, draw_night
 from src.web      import (start_control_server, STATE, STATE_LOCK,
                           record_nearby, pop_queued, peek_queued)
+
+
+def _parse_hhmm(s):
+    h, m = s.split(":")
+    return dtime(int(h), int(m))
+
+
+_NIGHT_START = _parse_hhmm(NIGHT_START)
+_NIGHT_END   = _parse_hhmm(NIGHT_END)
+
+
+def _in_night_window(now: datetime) -> bool:
+    """True when `now` falls in the overnight sleep window. The window wraps
+    midnight (e.g. 23:45 -> 06:00), so it's checked as "at/after start OR
+    at/before end" rather than a simple start<=t<=end range."""
+    if not NIGHT_MODE_ENABLED:
+        return False
+    t = now.time()
+    if _NIGHT_START <= _NIGHT_END:
+        return _NIGHT_START <= t <= _NIGHT_END
+    return t >= _NIGHT_START or t <= _NIGHT_END
 
 
 def _track_signature():
@@ -93,9 +115,30 @@ def main():
     # When tracking is active we alternate: tracking screen → nearest nearby → repeat.
     # This boolean flips every cycle so the pilot still gets a local traffic update.
     show_nearby_interlude = False
+    # Set once the overnight sleep screen has been drawn, so it's only pushed
+    # to the panel a single time per night rather than every loop.
+    night_drawn = False
 
     while True:
         loop_start = time.time()
+        now        = datetime.now()
+
+        # --- Check for pinned flight -----------------------------------------
+        with TRACK_LOCK:
+            tracking_active = bool(TRACK.get("norm"))
+
+        # --- Night mode: nobody's watching, let the panel sleep ---------------
+        # A flight someone explicitly pinned still updates -- that's a sign
+        # someone IS watching -- everything else (weather polling, the normal
+        # nearby-aircraft rotation) pauses until NIGHT_END.
+        if _in_night_window(now) and not tracking_active:
+            if not night_drawn:
+                logger.info("Night mode: sleeping until %s.", NIGHT_END)
+                draw_night()
+                night_drawn = True
+            _responsive_sleep(60)
+            continue
+        night_drawn = False
 
         # --- Weather (refresh every 10 min) ----------------------------------
         if loop_start - last_wx > WX_INTERVAL:
@@ -107,10 +150,6 @@ def main():
                 STATE["weather"] = weather
                 if not STATE.get("updated_at"):
                     STATE["updated_at"] = datetime.utcnow().isoformat() + "Z"
-
-        # --- Check for pinned flight -----------------------------------------
-        with TRACK_LOCK:
-            tracking_active = bool(TRACK.get("norm"))
 
         if tracking_active:
             ctx = track_context()
